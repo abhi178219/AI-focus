@@ -1,0 +1,299 @@
+//@version=6
+indicator("EMA33 + VWAP + RSI + DI", overlay=true, max_labels_count=500)
+
+// ====================
+// USER INPUTS
+// ====================
+emaLen      = input.int(33, "EMA Band Length", minval=1)
+rsiLen      = input.int(14, "RSI Length", minval=1)
+dmiLen      = input.int(14, "DMI Length", minval=1)
+
+diThresh    = input.float(25.0, "DI Threshold", step=0.1)
+rsiBull     = input.float(55.0, "RSI Bull Level", step=0.1)
+rsiBear     = input.float(45.0, "RSI Bear Level", step=0.1)
+
+bandMode = input.string("Close Based", "Band Rule", options=["Close Based", "Full Candle Based"])
+
+useSessionFilter = input.bool(true, "Use NSE Session Filter (9:15-15:30)")
+useBarClose      = input.bool(true, "Signal on bar close only")
+
+// ==== EMA BAND STYLE ====
+showBand     = input.bool(true, "Show EMA Band")
+emaHighColor = input.color(color.green, "EMA High Line Color")
+emaLowColor  = input.color(color.red,   "EMA Low Line Color")
+bandColor    = input.color(color.blue,  "Band Fill Color")
+bandTransp   = input.int(85, "Band Transparency (0=Solid, 100=Invisible)", minval=0, maxval=100)
+
+// ==== VWAP STYLE ====
+showVWAP   = input.bool(true, "Show VWAP")
+vwapColor  = input.color(color.orange, "VWAP Line Color")
+vwapWidth  = input.int(2, "VWAP Line Width", minval=1, maxval=5)
+
+// ==== TABLE STYLE ====
+showTable = input.bool(true, "Show Table (top-right)")
+tableFont = input.string("Small", "Table Font Size", options=["Small", "Normal"])
+txtSize   = tableFont == "Normal" ? size.normal : size.small
+
+// Softer colors (30% transparency)
+colPos = color.new(color.green, 30)
+colNeg = color.new(color.red,   30)
+colNeu = color.new(color.gray,  30)
+
+// ====================
+// SYMBOL LIST (Indices + 10 stocks in required order)
+// ====================
+niftySym     = input.symbol("NSE:NIFTY",     "Index (NIFTY)")
+bankniftySym = input.symbol("NSE:BANKNIFTY", "Index (BANKNIFTY)")
+
+s1  = input.symbol("NSE:HDFCBANK",   "1) HDFCBANK")
+s2  = input.symbol("NSE:ICICIBANK",  "2) ICICIBANK")
+s3  = input.symbol("NSE:RELIANCE",   "3) RELIANCE")
+s4  = input.symbol("NSE:INFY",       "4) INFY")
+s5  = input.symbol("NSE:BHARTIARTL", "5) BHARTIARTL")
+s6  = input.symbol("NSE:LT",         "6) LT")
+s7  = input.symbol("NSE:SBIN",       "7) SBIN")
+s8  = input.symbol("NSE:AXISBANK",   "8) AXISBANK")
+s9  = input.symbol("NSE:TCS",        "9) TCS")
+s10 = input.symbol("NSE:ITC",        "10) ITC")
+
+// ====================
+// INCLUDE / EXCLUDE CHECKBOXES
+// ====================
+grpI = "Include Stocks (Table + Sum)"
+inc1  = input.bool(true, "Include HDFCBANK",   group=grpI)
+inc2  = input.bool(true, "Include ICICIBANK",  group=grpI)
+inc3  = input.bool(true, "Include RELIANCE",   group=grpI)
+inc4  = input.bool(true, "Include INFY",       group=grpI)
+inc5  = input.bool(true, "Include BHARTIARTL", group=grpI)
+inc6  = input.bool(true, "Include LT",         group=grpI)
+inc7  = input.bool(true, "Include SBIN",       group=grpI)
+inc8  = input.bool(true, "Include AXISBANK",   group=grpI)
+inc9  = input.bool(true, "Include TCS",        group=grpI)
+inc10 = input.bool(true, "Include ITC",        group=grpI)
+
+// ====================
+// WEIGHTAGES (fraction form: 12.30% = 0.1230) - editable
+// ====================
+grpW = "Weightage (for NIFTY Contribution)"
+w1  = input.float(0.1230, "HDFCBANK weight",    group=grpW, step=0.0001)
+w2  = input.float(0.0838, "ICICIBANK weight",   group=grpW, step=0.0001)
+w3  = input.float(0.0816, "RELIANCE weight",    group=grpW, step=0.0001)
+w4  = input.float(0.0498, "INFY weight",        group=grpW, step=0.0001)
+w5  = input.float(0.0475, "BHARTIARTL weight",  group=grpW, step=0.0001)
+w6  = input.float(0.0400, "LT weight",          group=grpW, step=0.0001)
+w7  = input.float(0.0387, "SBIN weight",        group=grpW, step=0.0001)
+w8  = input.float(0.0340, "AXISBANK weight",    group=grpW, step=0.0001)
+w9  = input.float(0.0276, "TCS weight",         group=grpW, step=0.0001)
+w10 = input.float(0.0269, "ITC weight",         group=grpW, step=0.0001)
+
+contribTooltip =
+     "Contribution (pts) = NIFTY_LTP * Weight * ((StockLTP - PrevClose) / PrevClose)\n" +
+     "Green = pushing NIFTY up, Red = pulling NIFTY down.\n" +
+     "NIFTY row shows SUM of selected stock contributions."
+
+// ====================
+// SESSION FILTER (NSE)
+// ====================
+sessTime  = time(timeframe.period, "0915-1530")
+inSession = not useSessionFilter or not na(sessTime)
+
+// ====================
+// MAIN CALCULATIONS (chart symbol)
+// ====================
+emaHigh = ta.ema(high, emaLen)
+emaLow  = ta.ema(low, emaLen)
+
+vwapVal = ta.vwap(hlc3)
+rsiVal  = ta.rsi(close, rsiLen)
+[pdi, ndi, _adx] = ta.dmi(dmiLen, dmiLen)  // _adx unused (ADX removed)
+
+aboveBand = bandMode == "Close Based" ? (close > emaHigh and close > emaLow) : (low > emaHigh)
+belowBand = bandMode == "Close Based" ? (close < emaHigh and close < emaLow) : (high < emaLow)
+
+bullAll = inSession and aboveBand and close > vwapVal and rsiVal > rsiBull and pdi > diThresh
+bearAll = inSession and belowBand and close < vwapVal and rsiVal < rsiBear and ndi > diThresh
+
+confirm = useBarClose ? barstate.isconfirmed : true
+rawBuy  = confirm and bullAll
+rawSell = confirm and bearAll
+
+// Fresh daily reset + alternating
+newDay = ta.change(time("D")) != 0
+var int lastSignal = 0
+if newDay
+    lastSignal := 0
+
+buySignal  = false
+sellSignal = false
+
+if rawBuy and lastSignal != 1
+    buySignal := true
+    lastSignal := 1
+
+if rawSell and lastSignal != -1
+    sellSignal := true
+    lastSignal := -1
+
+// ====================
+// PLOTTING
+// ====================
+pHighPlot = plot(showBand ? emaHigh : na, linewidth=2, color=emaHighColor, title="EMA High")
+pLowPlot  = plot(showBand ? emaLow  : na, linewidth=2, color=emaLowColor,  title="EMA Low")
+fill(pHighPlot, pLowPlot, color=color.new(bandColor, bandTransp), title="EMA Band Fill")
+
+plot(showVWAP ? vwapVal : na, linewidth=vwapWidth, color=vwapColor, title="VWAP (HLC3)")
+
+plotshape(buySignal,  style=shape.labelup,   location=location.belowbar, color=color.green, text="BUY",  textcolor=color.white, title="BUY")
+plotshape(sellSignal, style=shape.labeldown, location=location.abovebar, color=color.red,   text="SELL", textcolor=color.white, title="SELL")
+
+alertcondition(buySignal,  "BUY Alert",  "BUY signal formed")
+alertcondition(sellSignal, "SELL Alert", "SELL signal formed")
+
+// =====================================================================
+// OPTIMIZED MULTI-SYMBOL TABLE (2 request.security calls per symbol)
+// =====================================================================
+
+f_pack() =>
+    _c  = close
+    _h  = high
+    _l  = low
+    _eh = ta.ema(high, emaLen)
+    _el = ta.ema(low, emaLen)
+    _v  = ta.vwap(hlc3)
+    _r  = ta.rsi(close, rsiLen)
+    [_p, _n, _a] = ta.dmi(dmiLen, dmiLen)
+    [_c, _h, _l, _eh, _el, _v, _r, _p, _n, _a]
+
+f_rowcalc(_sym, _weight, _niftyLTP) =>
+    [c, h, l, eh, el, v, r, p, n, a] = request.security(_sym, timeframe.period, f_pack())
+    prevClose = request.security(_sym, "D", close[1])
+
+    float chg = na
+    if not na(prevClose)
+        chg := c - prevClose
+
+    // LTP color vs prev day close
+    ltpBg = not na(prevClose) ? (c > prevClose ? colPos : colNeg) : colNeu
+
+    // Contribution in NIFTY points (LIVE)
+    float contrib = na
+    if not na(prevClose) and prevClose != 0
+        contrib := _niftyLTP * _weight * (chg / prevClose)
+
+    aBand = bandMode == "Close Based" ? (c > eh and c > el) : (l > eh)
+    bBand = bandMode == "Close Based" ? (c < eh and c < el) : (h < el)
+
+    isBull = aBand and c > v and r > rsiBull and p > diThresh
+    isBear = bBand and c < v and r < rsiBear and n > diThresh
+
+    trendTxt = isBull ? "BULL" : isBear ? "BEAR" : "NEUTRAL"
+    trendBg  = isBull ? colPos : isBear ? colNeg : colNeu
+
+    vwapTxt = c > v ? "Above" : c < v ? "Below" : "At"
+    vwapBg  = c > v ? colPos : c < v ? colNeg : colNeu
+
+    rsiBg = r > rsiBull ? colPos : r < rsiBear ? colNeg : colNeu
+    pBg   = p > diThresh ? colPos : colNeu
+    nBg   = n > diThresh ? colNeg : colNeu
+    chgBg = na(chg) ? colNeu : chg > 0 ? colPos : chg < 0 ? colNeg : colNeu
+    contribBg = na(contrib) ? colNeu : contrib > 0 ? colPos : contrib < 0 ? colNeg : colNeu
+
+    nameTxt = str.replace(_sym, "NSE:", "")
+
+    [nameTxt, c, ltpBg, vwapTxt, r, p, n, trendTxt, chg, contrib, vwapBg, rsiBg, pBg, nBg, trendBg, chgBg, contribBg]
+
+// Get NIFTY LTP first
+[n_name0, n_ltp0, n_ltpBg0, n_vtxt0, n_r0, n_p0, n_n0, n_tr0, n_chg0, n_contrib0, n_vbg0, n_rbg0, n_pbg0, n_nbg0, n_trbg0, n_chgBg0, n_cbg0] = f_rowcalc(niftySym, 0.0, 0.0)
+niftyLTP = n_ltp0
+
+// Rows
+[n_name,  n_ltp,  n_ltpBg,  n_vtxt,  n_r,  n_p,  n_n,  n_tr,  n_chg,  n_contrib,  n_vbg,  n_rbg,  n_pbg,  n_nbg,  n_trbg,  n_chgBg,  n_cbg]  = f_rowcalc(niftySym, 0.0, niftyLTP)
+[bn_name, bn_ltp, bn_ltpBg, bn_vtxt, bn_r, bn_p, bn_n, bn_tr, bn_chg, bn_contrib, bn_vbg, bn_rbg, bn_pbg, bn_nbg, bn_trbg, bn_chgBg, bn_cbg] = f_rowcalc(bankniftySym, 0.0, niftyLTP)
+
+[s1_name, s1_ltp, s1_ltpBg, s1_vtxt, s1_r, s1_p, s1_n, s1_tr, s1_chg, s1_contrib, s1_vbg, s1_rbg, s1_pbg, s1_nbg, s1_trbg, s1_chgBg, s1_cbg] = f_rowcalc(s1,  w1,  niftyLTP)
+[s2_name, s2_ltp, s2_ltpBg, s2_vtxt, s2_r, s2_p, s2_n, s2_tr, s2_chg, s2_contrib, s2_vbg, s2_rbg, s2_pbg, s2_nbg, s2_trbg, s2_chgBg, s2_cbg] = f_rowcalc(s2,  w2,  niftyLTP)
+[s3_name, s3_ltp, s3_ltpBg, s3_vtxt, s3_r, s3_p, s3_n, s3_tr, s3_chg, s3_contrib, s3_vbg, s3_rbg, s3_pbg, s3_nbg, s3_trbg, s3_chgBg, s3_cbg] = f_rowcalc(s3,  w3,  niftyLTP)
+[s4_name, s4_ltp, s4_ltpBg, s4_vtxt, s4_r, s4_p, s4_n, s4_tr, s4_chg, s4_contrib, s4_vbg, s4_rbg, s4_pbg, s4_nbg, s4_trbg, s4_chgBg, s4_cbg] = f_rowcalc(s4,  w4,  niftyLTP)
+[s5_name, s5_ltp, s5_ltpBg, s5_vtxt, s5_r, s5_p, s5_n, s5_tr, s5_chg, s5_contrib, s5_vbg, s5_rbg, s5_pbg, s5_nbg, s5_trbg, s5_chgBg, s5_cbg] = f_rowcalc(s5,  w5,  niftyLTP)
+[s6_name, s6_ltp, s6_ltpBg, s6_vtxt, s6_r, s6_p, s6_n, s6_tr, s6_chg, s6_contrib, s6_vbg, s6_rbg, s6_pbg, s6_nbg, s6_trbg, s6_chgBg, s6_cbg] = f_rowcalc(s6,  w6,  niftyLTP)
+[s7_name, s7_ltp, s7_ltpBg, s7_vtxt, s7_r, s7_p, s7_n, s7_tr, s7_chg, s7_contrib, s7_vbg, s7_rbg, s7_pbg, s7_nbg, s7_trbg, s7_chgBg, s7_cbg] = f_rowcalc(s7,  w7,  niftyLTP)
+[s8_name, s8_ltp, s8_ltpBg, s8_vtxt, s8_r, s8_p, s8_n, s8_tr, s8_chg, s8_contrib, s8_vbg, s8_rbg, s8_pbg, s8_nbg, s8_trbg, s8_chgBg, s8_cbg] = f_rowcalc(s8,  w8,  niftyLTP)
+[s9_name, s9_ltp, s9_ltpBg, s9_vtxt, s9_r, s9_p, s9_n, s9_tr, s9_chg, s9_contrib, s9_vbg, s9_rbg, s9_pbg, s9_nbg, s9_trbg, s9_chgBg, s9_cbg] = f_rowcalc(s9,  w9,  niftyLTP)
+[s10_name, s10_ltp, s10_ltpBg, s10_vtxt, s10_r, s10_p, s10_n, s10_tr, s10_chg, s10_contrib, s10_vbg, s10_rbg, s10_pbg, s10_nbg, s10_trbg, s10_chgBg, s10_cbg] = f_rowcalc(s10, w10, niftyLTP)
+
+// ====================
+// SUM of selected contributions -> shown in NIFTY row
+// ====================
+float sumContrib = 0.0
+sumContrib += inc1  and not na(s1_contrib)  ? s1_contrib  : 0.0
+sumContrib += inc2  and not na(s2_contrib)  ? s2_contrib  : 0.0
+sumContrib += inc3  and not na(s3_contrib)  ? s3_contrib  : 0.0
+sumContrib += inc4  and not na(s4_contrib)  ? s4_contrib  : 0.0
+sumContrib += inc5  and not na(s5_contrib)  ? s5_contrib  : 0.0
+sumContrib += inc6  and not na(s6_contrib)  ? s6_contrib  : 0.0
+sumContrib += inc7  and not na(s7_contrib)  ? s7_contrib  : 0.0
+sumContrib += inc8  and not na(s8_contrib)  ? s8_contrib  : 0.0
+sumContrib += inc9  and not na(s9_contrib)  ? s9_contrib  : 0.0
+sumContrib += inc10 and not na(s10_contrib) ? s10_contrib : 0.0
+
+sumContribBg = sumContrib > 0 ? colPos : sumContrib < 0 ? colNeg : colNeu
+
+// ====================
+// TABLE DRAW (Dynamic rows based on include checkboxes)
+// Columns: Symbol | LTP | Contrib | VWAP | RSI | +DI | -DI | Trend | Change
+// ALL numbers are rounded to whole numbers
+// ====================
+int COLS = 9
+int ROWS = 20
+var table t = table.new(position.top_right, COLS, ROWS, frame_color=color.black, frame_width=1)
+
+f_put(_row, _name, _ltp, _ltpBg, _contribTxt, _contribBg, _vtxt, _r, _p, _n, _tr, _chg, _vbg, _rbg, _pbg, _nbg, _trbg, _chbg) =>
+    table.cell(t, 0, _row, _name, bgcolor=color.black, text_color=color.white, text_size=txtSize, text_halign=text.align_left)
+    table.cell(t, 1, _row, str.tostring(math.round(_ltp)), bgcolor=_ltpBg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 2, _row, _contribTxt, bgcolor=_contribBg, text_color=color.white, text_size=txtSize, tooltip=contribTooltip)
+    table.cell(t, 3, _row, _vtxt, bgcolor=_vbg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 4, _row, str.tostring(math.round(_r)), bgcolor=_rbg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 5, _row, str.tostring(math.round(_p)), bgcolor=_pbg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 6, _row, str.tostring(math.round(_n)), bgcolor=_nbg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 7, _row, _tr, bgcolor=_trbg, text_color=color.white, text_size=txtSize)
+    table.cell(t, 8, _row, str.tostring(math.round(_chg)), bgcolor=_chbg, text_color=color.white, text_size=txtSize)
+
+if showTable and barstate.islast
+    table.clear(t, 0, 0, COLS - 1, ROWS - 1)
+
+    table.cell(t, 0, 0, "Symbol",  bgcolor=color.black, text_color=color.white, text_size=txtSize, text_halign=text.align_left)
+    table.cell(t, 1, 0, "LTP",     bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 2, 0, "Contrib", bgcolor=color.black, text_color=color.white, text_size=txtSize, tooltip=contribTooltip)
+    table.cell(t, 3, 0, "VWAP",    bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 4, 0, "RSI",     bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 5, 0, "+DI",     bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 6, 0, "-DI",     bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 7, 0, "Trend",   bgcolor=color.black, text_color=color.white, text_size=txtSize)
+    table.cell(t, 8, 0, "Change",  bgcolor=color.black, text_color=color.white, text_size=txtSize)
+
+    // NIFTY shows SUM of selected contributions (rounded)
+    f_put(1,  n_name,  n_ltp,  n_ltpBg,  str.tostring(math.round(sumContrib)), sumContribBg, n_vtxt,  n_r,  n_p,  n_n,  n_tr,  n_chg,  n_vbg,  n_rbg,  n_pbg,  n_nbg,  n_trbg,  n_chgBg)
+    f_put(2,  bn_name, bn_ltp, bn_ltpBg, "-", colNeu, bn_vtxt, bn_r, bn_p, bn_n, bn_tr, bn_chg, bn_vbg, bn_rbg, bn_pbg, bn_nbg, bn_trbg, bn_chgBg)
+
+    int row = 3
+
+    if inc1
+        f_put(row, s1_name, s1_ltp, s1_ltpBg, str.tostring(math.round(s1_contrib)), s1_cbg, s1_vtxt, s1_r, s1_p, s1_n, s1_tr, s1_chg, s1_vbg, s1_rbg, s1_pbg, s1_nbg, s1_trbg, s1_chgBg), row += 1
+    if inc2
+        f_put(row, s2_name, s2_ltp, s2_ltpBg, str.tostring(math.round(s2_contrib)), s2_cbg, s2_vtxt, s2_r, s2_p, s2_n, s2_tr, s2_chg, s2_vbg, s2_rbg, s2_pbg, s2_nbg, s2_trbg, s2_chgBg), row += 1
+    if inc3
+        f_put(row, s3_name, s3_ltp, s3_ltpBg, str.tostring(math.round(s3_contrib)), s3_cbg, s3_vtxt, s3_r, s3_p, s3_n, s3_tr, s3_chg, s3_vbg, s3_rbg, s3_pbg, s3_nbg, s3_trbg, s3_chgBg), row += 1
+    if inc4
+        f_put(row, s4_name, s4_ltp, s4_ltpBg, str.tostring(math.round(s4_contrib)), s4_cbg, s4_vtxt, s4_r, s4_p, s4_n, s4_tr, s4_chg, s4_vbg, s4_rbg, s4_pbg, s4_nbg, s4_trbg, s4_chgBg), row += 1
+    if inc5
+        f_put(row, s5_name, s5_ltp, s5_ltpBg, str.tostring(math.round(s5_contrib)), s5_cbg, s5_vtxt, s5_r, s5_p, s5_n, s5_tr, s5_chg, s5_vbg, s5_rbg, s5_pbg, s5_nbg, s5_trbg, s5_chgBg), row += 1
+    if inc6
+        f_put(row, s6_name, s6_ltp, s6_ltpBg, str.tostring(math.round(s6_contrib)), s6_cbg, s6_vtxt, s6_r, s6_p, s6_n, s6_tr, s6_chg, s6_vbg, s6_rbg, s6_pbg, s6_nbg, s6_trbg, s6_chgBg), row += 1
+    if inc7
+        f_put(row, s7_name, s7_ltp, s7_ltpBg, str.tostring(math.round(s7_contrib)), s7_cbg, s7_vtxt, s7_r, s7_p, s7_n, s7_tr, s7_chg, s7_vbg, s7_rbg, s7_pbg, s7_nbg, s7_trbg, s7_chgBg), row += 1
+    if inc8
+        f_put(row, s8_name, s8_ltp, s8_ltpBg, str.tostring(math.round(s8_contrib)), s8_cbg, s8_vtxt, s8_r, s8_p, s8_n, s8_tr, s8_chg, s8_vbg, s8_rbg, s8_pbg, s8_nbg, s8_trbg, s8_chgBg), row += 1
+    if inc9
+        f_put(row, s9_name, s9_ltp, s9_ltpBg, str.tostring(math.round(s9_contrib)), s9_cbg, s9_vtxt, s9_r, s9_p, s9_n, s9_tr, s9_chg, s9_vbg, s9_rbg, s9_pbg, s9_nbg, s9_trbg, s9_chgBg), row += 1
+    if inc10
+        f_put(row, s10_name, s10_ltp, s10_ltpBg, str.tostring(math.round(s10_contrib)), s10_cbg, s10_vtxt, s10_r, s10_p, s10_n, s10_tr, s10_chg, s10_vbg, s10_rbg, s10_pbg, s10_nbg, s10_trbg, s10_chgBg), row += 1
