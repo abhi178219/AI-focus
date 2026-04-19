@@ -24,8 +24,9 @@ const RSS_FEEDS: FeedConfig[] = [
   { url: 'https://www.livemint.com/rss/technology', source: 'Livemint Tech', category: 'india_business' },
 
   // Global Macro & Markets
-  { url: 'https://feeds.reuters.com/reuters/businessNews', source: 'Reuters Business', category: 'global_macro' },
-  { url: 'https://feeds.apnews.com/rss/apf-business', source: 'AP Business', category: 'global_macro' },
+  { url: 'https://feeds.bbci.co.uk/news/business/rss.xml', source: 'BBC Business', category: 'global_macro' },
+  { url: 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines', source: 'MarketWatch', category: 'global_macro' },
+  { url: 'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml', source: 'NYT Business', category: 'global_macro' },
 ]
 
 function excerpt(text: string | undefined): string | null {
