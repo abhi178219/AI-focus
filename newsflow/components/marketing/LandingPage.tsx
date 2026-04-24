@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState, useTransition } from 'react'
+import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import { login, signup } from '@/app/actions/auth'
 import styles from './landing.module.css'
 
@@ -116,12 +118,14 @@ function buildVCol() {
 }
 
 export default function LandingPage() {
+  const router = useRouter()
   const [modalOpen, setModalOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('signin')
   const [clock, setClock] = useState('07:42:19 ET')
   const [locale, setLocale] = useState('NYC · 07:42 ET')
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+  const [mounted, setMounted] = useState(false)
   const cardGridRef = useRef<HTMLDivElement | null>(null)
 
   const rowA = useRef<HTMLDivElement | null>(null)
@@ -214,32 +218,45 @@ export default function LandingPage() {
     }
   }, [])
 
+  // Mount flag so portal only renders client-side
+  useEffect(() => { setMounted(true) }, [])
+
   // Modal body-overflow lock + ESC close
   useEffect(() => {
-    if (modalOpen) {
-      document.body.style.overflow = 'hidden'
-    } else {
-      document.body.style.overflow = ''
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setModalOpen(false)
-    }
+    document.body.style.overflow = modalOpen ? 'hidden' : ''
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setModalOpen(false) }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
   }, [modalOpen])
 
   function openModal(which: Mode) {
-    setMode(which)
     setError(null)
+    setMode(which)
     setModalOpen(true)
   }
 
-  async function handleSubmit(formData: FormData) {
+  // Handle form submission — login/signup server actions call redirect() on success
+  // which throws a special Next.js error; we re-throw it so the router handles navigation.
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
     setError(null)
     startTransition(async () => {
-      const result = mode === 'signin' ? await login(formData) : await signup(formData)
-      if (result && 'error' in result && result.error) {
-        setError(result.error)
+      try {
+        const result = mode === 'signin' ? await login(formData) : await signup(formData)
+        // Only reaches here on error return (redirect() throws and never returns)
+        if (result && 'error' in result && result.error) {
+          setError(result.error)
+        }
+      } catch (err: unknown) {
+        // Re-throw Next.js redirect errors so the router can navigate
+        const digest = (err as { digest?: string })?.digest ?? ''
+        if (digest.startsWith('NEXT_REDIRECT')) {
+          router.push('/')
+          router.refresh()
+          return
+        }
+        setError('Something went wrong. Please try again.')
       }
     })
   }
@@ -682,120 +699,187 @@ export default function LandingPage() {
           </footer>
         </div>
 
-        {/* Auth Modal */}
+      </div>
+
+      {/* Auth Modal — rendered into document.body via portal to avoid stacking-context issues */}
+      {mounted && createPortal(
         <div
-          className={`modal-scrim ${modalOpen ? 'open' : ''}`}
           role="dialog"
           aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setModalOpen(false)
+          onClick={(e) => { if (e.target === e.currentTarget) setModalOpen(false) }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'rgba(11,18,32,0.75)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: modalOpen ? 1 : 0,
+            pointerEvents: modalOpen ? 'auto' : 'none',
+            transition: 'opacity 0.28s ease',
           }}
         >
-          <div className="modal">
+          <div style={{
+            width: 'min(440px, 92vw)',
+            background: '#F1E9D2',
+            border: '1px solid #0B1220',
+            borderRadius: 12,
+            padding: '34px 34px 30px',
+            position: 'relative',
+            boxShadow: '0 30px 80px -20px rgba(0,0,0,0.45)',
+            transform: modalOpen ? 'translateY(0) scale(1)' : 'translateY(16px) scale(0.98)',
+            transition: 'transform 0.3s cubic-bezier(.2,.7,.2,1)',
+            color: '#0B1220',
+            fontFamily: "'Inter', system-ui, sans-serif",
+          }}>
+            {/* Close */}
             <button
-              className="close"
               aria-label="Close"
               onClick={() => setModalOpen(false)}
               type="button"
-            >
-              ✕
-            </button>
+              style={{
+                position: 'absolute', top: 14, right: 14,
+                width: 28, height: 28, borderRadius: '50%',
+                border: '1px solid rgba(20,19,16,0.15)',
+                background: 'transparent',
+                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 14, color: '#0B1220',
+              }}
+            >✕</button>
 
-            <div className="m-eyebrow">NEWSFLOW · MEMBER ACCESS</div>
-            <h2>{mode === 'signin' ? 'Welcome back.' : 'Tune your feed.'}</h2>
-            <p className="m-sub">
-              {mode === 'signin'
-                ? 'Sign in to your curated desk.'
-                : 'Two minutes to your first morning digest.'}
+            {/* Eyebrow */}
+            <div style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase',
+              color: '#0B1220', background: 'oklch(88% 0.22 122)',
+              display: 'inline-block', padding: '4px 8px', borderRadius: 3,
+              marginBottom: 14, fontWeight: 700,
+            }}>NEWSFLOW · MEMBER ACCESS</div>
+
+            {/* Title */}
+            <h2 style={{
+              fontFamily: "'Instrument Serif', serif",
+              fontWeight: 400, fontSize: 38, lineHeight: 1,
+              letterSpacing: '-0.02em', margin: '0 0 8px', color: '#0B1220',
+            }}>
+              {mode === 'signin' ? 'Welcome back.' : 'Tune your feed.'}
+            </h2>
+            <p style={{ fontSize: 13.5, color: '#1B2236', margin: '0 0 22px' }}>
+              {mode === 'signin' ? 'Sign in to your curated desk.' : 'Two minutes to your first morning digest.'}
             </p>
 
-            <div className="tabs" role="tablist">
-              <button
-                type="button"
-                className={mode === 'signin' ? 'active' : ''}
-                onClick={() => {
-                  setMode('signin')
-                  setError(null)
-                }}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                className={mode === 'signup' ? 'active' : ''}
-                onClick={() => {
-                  setMode('signup')
-                  setError(null)
-                }}
-              >
-                Create account
-              </button>
+            {/* Tabs */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr',
+              background: 'rgba(20,19,16,0.06)', borderRadius: 8,
+              padding: 4, marginBottom: 22,
+            }}>
+              {(['signin', 'signup'] as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMode(m); setError(null) }}
+                  style={{
+                    background: mode === m ? '#0B1220' : 'transparent',
+                    border: 0, padding: '9px 10px',
+                    fontFamily: "'Inter', sans-serif", fontSize: 12.5, fontWeight: 600,
+                    color: mode === m ? '#F1E9D2' : '#1B2236',
+                    cursor: 'pointer', borderRadius: 6,
+                    boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {m === 'signin' ? 'Sign in' : 'Create account'}
+                </button>
+              ))}
             </div>
 
-            <form action={handleSubmit} noValidate>
+            {/* Form */}
+            <form onSubmit={handleSubmit} noValidate>
               {mode === 'signup' && (
-                <div className="field">
-                  <label htmlFor="name">Full name</label>
-                  <input type="text" id="name" name="name" placeholder="Ada Lovelace" autoComplete="name" />
-                </div>
+                <ModalField label="Full name">
+                  <input type="text" name="name" placeholder="Ada Lovelace" autoComplete="name" style={inputStyle} />
+                </ModalField>
               )}
-              <div className="field">
-                <label htmlFor="email">Work email</label>
+              <ModalField label="Work email">
+                <input type="email" name="email" placeholder="ada@company.com" autoComplete="email" required style={inputStyle} />
+              </ModalField>
+              <ModalField label="Password">
                 <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  placeholder="ada@company.com"
-                  autoComplete="email"
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="password">Password</label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  placeholder="••••••••"
+                  type="password" name="password" placeholder="••••••••"
                   autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                  required
-                  minLength={8}
+                  required minLength={8} style={inputStyle}
                 />
-                {mode === 'signup' && <div className="hint">Minimum 8 characters.</div>}
-              </div>
+                {mode === 'signup' && <span style={{ fontSize: 11, color: '#7C8699' }}>Minimum 8 characters.</span>}
+              </ModalField>
               {mode === 'signup' && (
-                <div className="field">
-                  <label htmlFor="role">Your role</label>
-                  <input type="text" id="role" name="role" placeholder="Senior PM, Platform" />
+                <ModalField label="Your role">
+                  <input type="text" name="role" placeholder="Senior PM, Platform" style={inputStyle} />
+                </ModalField>
+              )}
+
+              {error && (
+                <div style={{ color: 'oklch(66% 0.23 22)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", marginBottom: 10 }}>
+                  {error}
                 </div>
               )}
 
-              {error && <div className="err show">{error}</div>}
-
-              <button type="submit" className="btn btn-solid submit" disabled={pending}>
-                {pending
-                  ? 'Working…'
-                  : mode === 'signin'
-                    ? 'Sign in →'
-                    : 'Create my account →'}
+              <button
+                type="submit"
+                disabled={pending}
+                style={{
+                  width: '100%', padding: 13, fontSize: 14, marginTop: 6,
+                  background: '#0B1220', color: '#F1E9D2',
+                  border: '1px solid transparent', borderRadius: 6,
+                  fontFamily: "'Inter', sans-serif", fontWeight: 600,
+                  cursor: pending ? 'not-allowed' : 'pointer',
+                  opacity: pending ? 0.7 : 1,
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {pending ? 'Working…' : mode === 'signin' ? 'Sign in →' : 'Create my account →'}
               </button>
 
-              <div className="foot-note">
+              <div style={{ fontSize: 11, color: '#7C8699', textAlign: 'center', marginTop: 14 }}>
                 {mode === 'signin' ? (
-                  <>
-                    Don&apos;t have an account?{' '}
-                    <a onClick={() => setMode('signup')}>Create one.</a>
+                  <>Don&apos;t have an account?{' '}
+                    <span onClick={() => { setMode('signup'); setError(null) }} style={{ color: '#0B1220', cursor: 'pointer', textDecoration: 'underline' }}>Create one.</span>
                   </>
                 ) : (
-                  <>
-                    Already a member? <a onClick={() => setMode('signin')}>Sign in.</a>
+                  <>Already a member?{' '}
+                    <span onClick={() => { setMode('signin'); setError(null) }} style={{ color: '#0B1220', cursor: 'pointer', textDecoration: 'underline' }}>Sign in.</span>
                   </>
                 )}
               </div>
             </form>
           </div>
-        </div>
-      </div>
+        </div>,
+        document.body
+      )}
     </>
+  )
+}
+
+/* Small helper components */
+const inputStyle: React.CSSProperties = {
+  border: '1px solid rgba(20,19,16,0.2)',
+  borderRadius: 6, padding: '11px 13px', fontSize: 14,
+  fontFamily: "'Inter', sans-serif", background: '#fff', color: '#0B1220',
+  outline: 'none', width: '100%',
+}
+
+function ModalField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+      <label style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+        letterSpacing: '0.12em', textTransform: 'uppercase', color: '#7C8699',
+      }}>{label}</label>
+      {children}
+    </div>
   )
 }
