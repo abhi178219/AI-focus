@@ -14,7 +14,8 @@ import { logout } from '@/app/actions/auth'
 import styles from './editorial.module.css'
 
 /* ── helpers ───────────────────────────────────────────────────── */
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+const fetcher = (url: string) =>
+  fetch(url).then((r) => r.json()).then((d) => Array.isArray(d) ? d : (d.articles ?? []))
 
 const COL_CATS: Category[] = ['ai_llm', 'dev_tools', 'india_business']
 const COL_LABELS: Record<string, string> = {
