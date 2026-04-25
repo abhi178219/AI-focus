@@ -1,53 +1,74 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
-import BottomNav from '@/components/nav/BottomNav'
+import { getSavedArticles } from '@/lib/localStorage'
 import { logout } from '@/app/actions/auth'
+import styles from '@/components/feed/editorial.module.css'
 
-const BentoGrid = dynamic(() => import('@/components/feed/BentoGrid'), { ssr: false })
-const SavedPosts = dynamic(() => import('@/components/saved/SavedPosts'), { ssr: false })
-const CustomFeeds = dynamic(() => import('@/components/others/CustomFeeds'), { ssr: false })
+const EditorialFeed = dynamic(() => import('@/components/feed/EditorialFeed'), { ssr: false })
+const SavedPosts    = dynamic(() => import('@/components/saved/SavedPosts'),    { ssr: false })
+const CustomFeeds   = dynamic(() => import('@/components/others/CustomFeeds'),  { ssr: false })
 
 export type Tab = 'news' | 'saved' | 'others'
 
-const TAB_TITLES: Record<Tab, string> = {
-  news: "Today's News",
-  saved: 'Saved Posts',
-  others: 'Others',
-}
-
 export default function FeedView() {
-  const [activeTab, setActiveTab] = useState<Tab>('news')
+  const [activeTab,  setActiveTab]  = useState<Tab>('news')
+  const [savedCount, setSavedCount] = useState(0)
 
+  useEffect(() => {
+    function sync() { setSavedCount(getSavedArticles().length) }
+    sync()
+    window.addEventListener('storage', sync)
+    return () => window.removeEventListener('storage', sync)
+  }, [])
+
+  function handleTabChange(tab: Tab) {
+    setActiveTab(tab)
+    setSavedCount(getSavedArticles().length)
+  }
+
+  if (activeTab === 'news') {
+    return (
+      <EditorialFeed
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        savedCount={savedCount}
+      />
+    )
+  }
+
+  /* ── Saved & Others share the same editorial toolbar ─────────── */
   return (
-    <div className="min-h-screen bg-stone-50 pb-20">
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-sm border-b border-stone-200">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold text-stone-900 tracking-tight">NewsFlow</h1>
-            <span className="hidden sm:block text-xs text-stone-400 font-medium">
-              {TAB_TITLES[activeTab]}
-            </span>
-          </div>
-          <form action={logout}>
-            <button
-              type="submit"
-              className="text-xs text-stone-400 hover:text-stone-700 transition-colors px-2 py-1 rounded-lg hover:bg-stone-100"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto px-4 pt-5">
-        {activeTab === 'news' && <BentoGrid />}
-        {activeTab === 'saved' && <SavedPosts />}
+    <div className={styles.wrap}>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,700;1,9..144,400&family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap"
+        rel="stylesheet"
+      />
+      <div style={{ paddingBottom: 64 }}>
+        {activeTab === 'saved'  && <SavedPosts />}
         {activeTab === 'others' && <CustomFeeds />}
-      </main>
+      </div>
 
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="toolbar">
+        <div className="me">N</div>
+        <button
+          className="tab"
+          onClick={() => handleTabChange('news')}
+        >Today</button>
+        <button
+          className={`tab${activeTab === 'saved'  ? ' active' : ''}`}
+          onClick={() => handleTabChange('saved')}
+        >Saved&ensp;·&ensp;{savedCount}</button>
+        <button
+          className={`tab${activeTab === 'others' ? ' active' : ''}`}
+          onClick={() => handleTabChange('others')}
+        >Feeds</button>
+        <div className="tsep" />
+        <form action={logout} style={{ margin: 0 }}>
+          <button type="submit" className="tab">Sign out</button>
+        </form>
+      </div>
     </div>
   )
 }
