@@ -1,6 +1,6 @@
 'use client'
 
-import type { Tab } from '@/app/page'
+import type { Tab } from '@/components/feed/FeedView'
 
 interface Props {
   activeTab: Tab

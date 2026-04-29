@@ -1,0 +1,9 @@
+{
+	"id": "FOyGLm8dTOt8Ipo",
+	"json": "{\"id\":\"FOyGLm8dTOt8Ipo\",\"url\":\"https://entrackr.com/\",\"loadedUrl\":\"https://entrackr.com/\",\"uniqueKey\":\"https://entrackr.com\",\"method\":\"GET\",\"noRetry\":false,\"retryCount\":0,\"errorMessages\":[],\"headers\":{},\"userData\":{\"__crawlee\":{\"state\":4}},\"handledAt\":\"2026-04-19T14:52:00.182Z\"}",
+	"method": "GET",
+	"orderNo": null,
+	"retryCount": 0,
+	"uniqueKey": "https://entrackr.com",
+	"url": "https://entrackr.com/"
+}
