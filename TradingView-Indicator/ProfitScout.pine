@@ -1,0 +1,375 @@
+//@version=6
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  ProfitScout — Reverse-Engineered from Screenshot Analysis      ║
+// ║  Core: Supertrend (TS 2.8) + EMA Band + VWAP + ATR TP Ladder   ║
+// ║  Signals: BC / BUY / SELL / LE / S                              ║
+// ║  Version: 1.0  |  Pine Script v6                                ║
+// ╚══════════════════════════════════════════════════════════════════╝
+indicator("ProfitScout", shorttitle="ProfitScout", overlay=true,
+  max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1 — INPUTS
+// ═══════════════════════════════════════════════════════════════════
+
+var string G1 = "══ Supertrend (Trail Stop) ══"
+atrLen  = input.int   (14,   "ATR Period",              group=G1, minval=1)
+tsMult  = input.float (2.8,  "Trail Stop Multiplier",   group=G1, step=0.1, minval=0.5,
+            tooltip="Shown as 'TS: X.X' in table. Controls Supertrend sensitivity.")
+
+var string G2 = "══ EMA Band ══"
+emaLen  = input.int   (20,   "EMA Length",              group=G2, minval=1)
+showBand = input.bool (true, "Show EMA Band",           group=G2)
+
+var string G3 = "══ Take Profits ══"
+tpStep  = input.float (1.0,  "TP Step (× ATR)",         group=G3, step=0.1, minval=0.1,
+            tooltip="Each TP = Entry + N × ATR × this multiplier")
+numTP   = input.int   (6,    "Number of TPs",           group=G3, minval=1, maxval=6)
+showTP  = input.bool  (true, "Show TP Labels on Chart", group=G3)
+
+var string G4 = "══ Filters ══"
+rsiLen  = input.int   (14,   "RSI Length",              group=G4)
+rsiBC   = input.float (50.0, "RSI Min for BC Signal",   group=G4, step=1.0,
+            tooltip="BC fires only when RSI > this value")
+useVWAP = input.bool  (true, "VWAP Filter (signals only above/below VWAP)", group=G4)
+useSession = input.bool(true, "NSE Session Filter (09:15–15:30 IST)",        group=G4)
+
+var string G5 = "══ Display ══"
+showBG  = input.bool  (true, "Background Colour (Green/Red trend)",  group=G5)
+showST  = input.bool  (true, "Show Supertrend Line",                 group=G5)
+showTbl = input.bool  (true, "Show Info Table",                      group=G5)
+tblPos  = input.string("Bottom Right", "Table Position",             group=G5,
+            options=["Bottom Right","Bottom Left","Top Right","Top Left"])
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2 — CORE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════
+
+// ATR
+atr = ta.atr(atrLen)
+
+// Supertrend
+[stLine, stDir] = ta.supertrend(tsMult, atrLen)
+isBull = stDir < 0  // price above supertrend = bullish
+isBear = stDir > 0  // price below supertrend = bearish
+
+// EMA Band (EMA of high and low separately — wider band)
+emaH = ta.ema(high,  emaLen)
+emaL = ta.ema(low,   emaLen)
+emaM = ta.ema(close, emaLen)
+
+// VWAP (daily reset)
+vwap = ta.vwap(hlc3)
+
+// RSI
+rsi = ta.rsi(close, rsiLen)
+
+// Session filter (NSE 09:15 – 15:30 IST)
+inSession = not useSession or (time(timeframe.period, "0915-1530", "Asia/Kolkata") != 0)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3 — SIGNAL LOGIC
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Supertrend crossovers (primary flips) ──
+bullFlip = isBull and isBear[1]  // was bearish, flipped bullish
+bearFlip = isBear and isBull[1]  // was bullish, flipped bearish
+
+// ── VWAP position ──
+aboveVWAP = close > vwap
+belowVWAP = close < vwap
+
+// ── BC (Buy Confirmed) ──
+// Supertrend flips bullish + price above VWAP + RSI confirms momentum
+bcSig = inSession and bullFlip and (not useVWAP or aboveVWAP) and rsi > rsiBC
+
+// ── BUY ──
+// Supertrend flips bullish but without full confirmation
+buySig = inSession and bullFlip and not bcSig
+
+// ── LE (Long Entry — pullback entry) ──
+// In established bull trend: price dips to EMA Low zone and recovers
+// Candle closes above emaL after touching it (wick entry zone)
+leSig  = inSession and isBull and not bullFlip
+         and ta.crossover(close, emaL)
+         and (not useVWAP or aboveVWAP)
+         and rsi > 40
+         and rsi < 70  // not overbought
+
+// ── SELL ──
+// Supertrend flips bearish
+sellSig = inSession and bearFlip
+
+// ── S (Short continuation entry) ──
+// In established bear trend: price rallies to EMA High zone then rolls over
+sSig   = inSession and isBear and not bearFlip
+         and ta.crossunder(close, emaH)
+         and (not useVWAP or belowVWAP)
+         and rsi < 60
+         and rsi > 30  // not oversold
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4 — TRADE STATE & TP TRACKING
+// ═══════════════════════════════════════════════════════════════════
+
+var float entryPx = na   // entry price when signal fired
+var float eATR    = na   // ATR value at entry (used for fixed TP calc)
+var string trDir  = "FLAT"
+var int   tpHit   = 0    // how many TPs have been hit
+
+// Update state on new signal
+if bcSig or buySig or leSig
+    entryPx := close
+    eATR    := atr
+    trDir   := "LONG"
+    tpHit   := 0
+
+if sellSig or sSig
+    entryPx := close
+    eATR    := atr
+    trDir   := "SHORT"
+    tpHit   := 0
+
+// Trail SL = live Supertrend line (dynamic, tightens as price moves)
+trailSL = stLine
+
+// Net points from entry
+netPts = na(entryPx) ? 0.0 :
+         trDir == "LONG"  ? math.round(close - entryPx, 2) :
+         trDir == "SHORT" ? math.round(entryPx - close, 2) : 0.0
+
+// ── TP Level Calculator ──
+// Each TP is a fixed multiple of ATR captured at entry time
+// Long:  entry + N × eATR × tpStep
+// Short: entry - N × eATR × tpStep
+calcTP(n) =>
+    na(entryPx) or na(eATR) ? float(na) :
+    trDir == "LONG"  ? entryPx + eATR * tpStep * n :
+    trDir == "SHORT" ? entryPx - eATR * tpStep * n : float(na)
+
+tp1 = calcTP(1)
+tp2 = calcTP(2)
+tp3 = calcTP(3)
+tp4 = calcTP(4)
+tp5 = calcTP(5)
+tp6 = calcTP(6)
+
+// ── TP Hit Detection ──
+if trDir == "LONG"
+    if not na(tp1) and high >= tp1 and tpHit < 1
+        tpHit := 1
+    if not na(tp2) and high >= tp2 and tpHit < 2
+        tpHit := 2
+    if not na(tp3) and high >= tp3 and tpHit < 3
+        tpHit := 3
+    if not na(tp4) and high >= tp4 and tpHit < 4
+        tpHit := 4
+    if not na(tp5) and high >= tp5 and tpHit < 5
+        tpHit := 5
+    if not na(tp6) and high >= tp6 and tpHit < 6
+        tpHit := 6
+
+if trDir == "SHORT"
+    if not na(tp1) and low <= tp1 and tpHit < 1
+        tpHit := 1
+    if not na(tp2) and low <= tp2 and tpHit < 2
+        tpHit := 2
+    if not na(tp3) and low <= tp3 and tpHit < 3
+        tpHit := 3
+    if not na(tp4) and low <= tp4 and tpHit < 4
+        tpHit := 4
+    if not na(tp5) and low <= tp5 and tpHit < 5
+        tpHit := 5
+    if not na(tp6) and low <= tp6 and tpHit < 6
+        tpHit := 6
+
+// Next TP to hit
+nextTPNum = math.min(tpHit + 1, numTP)
+nextTPVal = nextTPNum == 1 ? tp1 :
+            nextTPNum == 2 ? tp2 :
+            nextTPNum == 3 ? tp3 :
+            nextTPNum == 4 ? tp4 :
+            nextTPNum == 5 ? tp5 : tp6
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5 — BACKGROUND & ZONE PLOTS
+// ═══════════════════════════════════════════════════════════════════
+
+// Background colour — shows overall trend bias
+bgcolor(showBG and isBull ? color.new(color.green, 93) : na, title="Bull Background")
+bgcolor(showBG and isBear ? color.new(color.red,   93) : na, title="Bear Background")
+
+// Supertrend line (changes colour on flip)
+plot(showST ? stLine : na, "Supertrend",
+     color     = isBull ? color.new(color.green, 0) : color.new(color.red, 0),
+     linewidth  = 2,
+     style      = plot.style_line)
+
+// EMA Band — creates the shaded zone visible in screenshots
+emaHPlot = plot(showBand ? emaH : na, "EMA High",
+     color=color.new(#5C6BC0, 40), linewidth=1)
+emaLPlot = plot(showBand ? emaL : na, "EMA Low",
+     color=color.new(#5C6BC0, 40), linewidth=1)
+fill(emaHPlot, emaLPlot,
+     color=isBull ? color.new(#1B5E20, 82) : color.new(#B71C1C, 82),
+     title="EMA Band Fill")
+
+// EMA Mid (MID dashed line visible in screenshots)
+plot(emaM, "MID",
+     color    = color.new(color.gray, 50),
+     linewidth = 1,
+     style    = plot.style_circles)
+
+// VWAP
+plot(vwap, "VWAP",
+     color    = color.new(color.orange, 20),
+     linewidth = 1)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6 — SIGNAL LABELS
+// ═══════════════════════════════════════════════════════════════════
+
+// Label Y-offset (percentage below/above bar for spacing)
+labelOffsetDn = low  * 0.9997
+labelOffsetUp = high * 1.0003
+
+// BC — Buy Confirmed (teal, strongest signal)
+if bcSig
+    label.new(bar_index, labelOffsetDn, "BC",
+      style     = label.style_label_up,
+      color     = color.new(#00897B, 0),
+      textcolor = color.white,
+      size      = size.small)
+
+// BUY — Supertrend flip without full confirmation (green)
+if buySig
+    label.new(bar_index, labelOffsetDn, "BUY",
+      style     = label.style_label_up,
+      color     = color.new(color.green, 10),
+      textcolor = color.white,
+      size      = size.small)
+
+// LE — Long Entry pullback (lime, secondary long)
+if leSig
+    label.new(bar_index, labelOffsetDn, "LE",
+      style     = label.style_label_up,
+      color     = color.new(#66BB6A, 10),
+      textcolor = color.white,
+      size      = size.small)
+
+// SELL — Supertrend flip bearish (red)
+if sellSig
+    label.new(bar_index, labelOffsetUp, "SELL",
+      style     = label.style_label_down,
+      color     = color.new(color.red, 0),
+      textcolor = color.white,
+      size      = size.small)
+
+// S — Short continuation entry (dark red)
+if sSig
+    label.new(bar_index, labelOffsetUp, "S",
+      style     = label.style_label_down,
+      color     = color.new(#B71C1C, 10),
+      textcolor = color.white,
+      size      = size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7 — TP LEVEL LABELS (RIGHT EDGE, LAST BAR)
+// ═══════════════════════════════════════════════════════════════════
+
+if showTP and barstate.islast and not na(entryPx)
+    tpVals = array.from(tp1, tp2, tp3, tp4, tp5, tp6)
+    for i = 0 to numTP - 1
+        v = array.get(tpVals, i)
+        if not na(v)
+            isHit  = i < tpHit
+            isNext = i == tpHit
+            col    = isHit  ? color.new(color.gray,  60) :
+                     isNext ? color.new(#00897B,      10) :
+                               color.new(color.teal,  25)
+            label.new(bar_index + 2, v,
+              "TP" + str.tostring(i + 1),
+              xloc      = xloc.bar_index,
+              style     = label.style_label_left,
+              color     = col,
+              textcolor = isHit ? color.new(color.white, 60) : color.white,
+              size      = size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8 — INFO TABLE
+// ═══════════════════════════════════════════════════════════════════
+
+tPos = tblPos == "Bottom Right" ? position.bottom_right :
+       tblPos == "Bottom Left"  ? position.bottom_left  :
+       tblPos == "Top Right"    ? position.top_right    : position.top_left
+
+var table tbl = table.new(tPos, 2, 5,
+  bgcolor      = color.new(#1A1A2E, 10),
+  border_color = color.new(color.gray, 50),
+  border_width = 1,
+  frame_color  = color.new(color.gray, 30),
+  frame_width  = 1)
+
+if showTbl and barstate.islast
+
+    // Colours
+    dirCol = trDir == "LONG"  ? color.new(#00897B, 10) :
+             trDir == "SHORT" ? color.new(color.red, 10) :
+                                color.new(color.gray, 30)
+    dirArrow = trDir == "LONG" ? "▲ LONG" : trDir == "SHORT" ? "▼ SHORT" : "─ FLAT"
+    slCol  = not na(trailSL) and close <= trailSL ? color.new(color.red, 20) :
+                                                     color.new(#E65100, 30)
+    npCol  = netPts >= 0 ? color.new(#00897B, 0) : color.new(color.red, 0)
+    hdrTxt = "ProfitScout | TS: " + str.tostring(tsMult)
+    slTxt  = na(trailSL) ? "—" : str.tostring(math.round(trailSL, 2))
+    epTxt  = na(entryPx) ? "—" : str.tostring(math.round(entryPx, 2))
+    npTxt  = str.tostring(netPts)
+    ntTxt  = na(nextTPVal) ? "—" :
+             "TP" + str.tostring(nextTPNum) + " @ " + str.tostring(math.round(nextTPVal, 2))
+
+    // Row 0 — Header
+    table.cell(tbl, 0, 0, hdrTxt,
+      text_color=color.silver, bgcolor=color.new(#0D0D1A, 10),
+      text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, dirArrow,
+      text_color=color.white, bgcolor=dirCol,
+      text_size=size.small)
+
+    // Row 1 — Entry Price
+    table.cell(tbl, 0, 1, "Entry Price",
+      text_color=color.silver, bgcolor=color.new(color.gray, 55), text_size=size.small)
+    table.cell(tbl, 1, 1, epTxt,
+      text_color=color.white,  bgcolor=color.new(color.gray, 40), text_size=size.small)
+
+    // Row 2 — Trail SL
+    table.cell(tbl, 0, 2, "Trail SL",
+      text_color=color.silver, bgcolor=color.new(color.gray, 55), text_size=size.small)
+    table.cell(tbl, 1, 2, slTxt,
+      text_color=color.white,  bgcolor=slCol, text_size=size.small)
+
+    // Row 3 — Net Points
+    table.cell(tbl, 0, 3, "Net Points",
+      text_color=color.silver, bgcolor=color.new(color.gray, 55), text_size=size.small)
+    table.cell(tbl, 1, 3, npTxt,
+      text_color=npCol, bgcolor=color.new(color.gray, 40), text_size=size.small)
+
+    // Row 4 — Next Target
+    table.cell(tbl, 0, 4, "Next Target",
+      text_color=color.silver, bgcolor=color.new(color.gray, 55), text_size=size.small)
+    table.cell(tbl, 1, 4, ntTxt,
+      text_color=color.new(#00897B, 0), bgcolor=color.new(color.gray, 40), text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 9 — DATA WINDOW OUTPUTS
+// (Matches the header bar values visible in the screenshots)
+// ═══════════════════════════════════════════════════════════════════
+
+plot(isBull ? stLine : na, "ST Support",   color.new(color.green, 0),  display=display.data_window)
+plot(isBear ? stLine : na, "ST Resistance",color.new(color.red, 0),    display=display.data_window)
+plot(emaL,                  "EMA Low",      color.new(#5C6BC0, 0),      display=display.data_window)
+plot(tp1,                   "TP1",          color.new(color.teal, 0),   display=display.data_window)
+plot(tp2,                   "TP2",          color.new(color.teal, 20),  display=display.data_window)
+plot(emaH,                  "EMA High",     color.new(#5C6BC0, 0),      display=display.data_window)
+plot(nextTPVal,             "Next TP",      color.new(color.teal, 0),   display=display.data_window)
+plot(trailSL,               "Trail SL",     color.new(color.orange, 0), display=display.data_window)
+plot(entryPx,               "Entry",        color.new(color.white, 0),  display=display.data_window)

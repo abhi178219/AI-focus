@@ -679,7 +679,7 @@ export default function TradingDashboard() {
 Format as "Hold vs Exit — Live Read" with: summary header, bar table if available, situation analysis (VWAP, volume patterns, key levels), clear recommendation with exact price levels, one-line bottom line.
 End on a new line with exactly one: [ACTION:HOLD] [ACTION:EXIT_FULL] [ACTION:EXIT_HALF] [ACTION:TRAIL_STOP] [ACTION:NONE]`;
       const user = `POSITION: ${p.side} ${p.symbol||"Nifty Option"} | Entry:${entry} Current:${cur} P&L:${pnl.toFixed(2)}pts | SL:${p.stopLoss||"—"} T1:${p.target1||"—"} T2:${p.target2||"—"} | ${LOT}qty (1 lot)
-${bars.length>1?`90-SEC BARS:\n${bars.map((b,i)=>`Bar${i+1}: O:${b.o.toFixed(2)} H:${b.h.toFixed(2)} L:${b.l.toFixed(2)} C:${b.c.toFixed(2)} N:${b.n}`).join("\n")`:"BARS: accumulating…"}`;
+${bars.length>1?`90-SEC BARS:\n${bars.map((b,i)=>`Bar${i+1}: O:${b.o.toFixed(2)} H:${b.h.toFixed(2)} L:${b.l.toFixed(2)} C:${b.c.toFixed(2)} N:${b.n}`).join("\n")}`:"BARS: accumulating…"}`;
       const raw = await callClaude(sys, user);
       const m   = raw.match(/\[ACTION:([^\]]+)\]/);
       const tag = m ? m[1] : "NONE";

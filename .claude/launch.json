@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nifty-tradedesk",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd '/Users/mac/nifty tradedesk' && npm run dev"],
+      "port": 5173
+    }
+  ]
+}

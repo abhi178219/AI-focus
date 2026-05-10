@@ -1,103 +1,49 @@
-# EMA33 + VWAP + RSI + DI — Indicator Notes
-**Script:** `EMA33_VWAP_RSI_DI.pine`  
-**Version:** Pine Script v6  
-**Chart:** NSE:NIFTY (works on any NSE symbol)  
-**Best Timeframe:** 5m / 15m (intraday scalping)
+# Indicator Notes — TradingView Custom Indicators
 
 ---
 
-## What This Indicator Does
+## 1. EMA33 + VWAP + RSI + DI
+**File:** `EMA33_VWAP_RSI_DI.pine`
+**Version:** Pine Script v6
+**Best TF:** 5m / 15m (intraday scalping, NSE session filter built-in)
 
-A confluence-based signal indicator that fires a **BUY** or **SELL** label only when ALL four conditions align simultaneously:
+### Logic
+Fires BUY/SELL only when ALL four conditions align simultaneously:
 
-| Condition | BUY requires | SELL requires |
+| Condition | BUY | SELL |
 |---|---|---|
 | EMA33 Band | Close ABOVE both EMA-High & EMA-Low | Close BELOW both |
 | VWAP | Close > VWAP | Close < VWAP |
 | RSI (14) | RSI > 55 | RSI < 45 |
 | +DI / -DI | +DI > 25 | -DI > 25 |
 
-Signals are **alternating** — once a BUY fires, the next signal must be a SELL (no repeat stacking). Resets fresh every day.
+Signals are **alternating** (no repeat stacks). Resets daily.
 
----
+### Components
+- **EMA33 Band** — EMA of high and low separately. Green = EMA highs, Red = EMA lows, Blue fill.
+- **VWAP (HLC3)** — Daily reset. Orange line. Long only above, short only below.
+- **RSI (14)** — Bull threshold 55, Bear threshold 45. Avoids chop zone 45–55.
+- **DMI** — +DI / -DI only (ADX removed). Threshold 25.
 
-## Components Explained
+### Live Table
+Shows real-time data for NIFTY, BANKNIFTY + 10 constituent stocks:
+`Symbol | LTP | Contrib | VWAP | RSI | +DI | -DI | Trend | Change`
 
-### 1. EMA33 Band
-- Two EMAs calculated on `high` and `low` separately (not close)
-- Creates a "band" rather than a single line — price must be cleanly above/below the entire band
-- **Band Mode options:**
-  - `Close Based` (default) — close must be above both EMA-High and EMA-Low
-  - `Full Candle Based` — stricter: entire candle (low/high) must be outside band
-- Green line = EMA of highs, Red line = EMA of lows, Blue fill between them
+### Stock Weightages (default)
+| Stock | Weight | Stock | Weight |
+|---|---|---|---|
+| HDFCBANK | 12.30% | LT | 4.00% |
+| ICICIBANK | 8.38% | SBIN | 3.87% |
+| RELIANCE | 8.16% | AXISBANK | 3.40% |
+| INFY | 4.98% | TCS | 2.76% |
+| BHARTIARTL | 4.75% | ITC | 2.69% |
 
-### 2. VWAP (Volume Weighted Average Price)
-- Calculated on `HLC3` = (High + Low + Close) / 3
-- Resets daily (standard VWAP behaviour)
-- Orange line on chart
-- Acts as intraday bias filter — only take longs above VWAP, shorts below
+### Session Filter
+Default ON — signals only between 09:15–15:30 IST.
 
-### 3. RSI (14)
-- Standard 14-period RSI
-- Bull threshold: 55 (momentum confirming upside)
-- Bear threshold: 45 (momentum confirming downside)
-- The 55/45 band avoids trading in neutral chop zone (45–55)
-
-### 4. DMI — Directional Movement Index
-- Uses +DI and -DI (ADX removed intentionally)
-- Threshold: 25 — only trade when directional strength is present
-- For BUY: +DI > 25 confirms bulls are in control
-- For SELL: -DI > 25 confirms bears are in control
-
----
-
-## Live Table (Top-Right)
-
-Shows real-time data for **NIFTY, BANKNIFTY + 10 constituent stocks:**
-
-| Column | Meaning |
-|---|---|
-| Symbol | Stock/index name |
-| LTP | Last traded price (green = above prev close, red = below) |
-| Contrib | NIFTY contribution in points from that stock |
-| VWAP | Above / Below / At VWAP |
-| RSI | Current RSI value |
-| +DI | Positive Directional Index |
-| -DI | Negative Directional Index |
-| Trend | BULL / BEAR / NEUTRAL based on all 4 conditions |
-| Change | Change from previous day close (pts) |
-
-**Contribution formula:**
+### Signal Logic (Step by Step)
 ```
-Contrib (pts) = NIFTY_LTP × Stock_Weight × ((Stock_LTP - PrevClose) / PrevClose)
-```
-The NIFTY row shows the **SUM** of all selected stock contributions — tells you how many points the top 10 stocks are collectively adding or subtracting from NIFTY.
-
-### Stock Weightages (default — editable in settings):
-| Stock | Weight |
-|---|---|
-| HDFCBANK | 12.30% |
-| ICICIBANK | 8.38% |
-| RELIANCE | 8.16% |
-| INFY | 4.98% |
-| BHARTIARTL | 4.75% |
-| LT | 4.00% |
-| SBIN | 3.87% |
-| AXISBANK | 3.40% |
-| TCS | 2.76% |
-| ITC | 2.69% |
-
----
-
-## Session Filter
-- Default: **ON** — only processes signals between **9:15 AM – 3:30 PM IST**
-- Can be turned off for testing on non-NSE symbols or historical analysis
-
----
-
-## Signal Logic (Step by Step)
-```
-1. Is market in session? (9:15–15:30)
+1. Is market in session? (09:15–15:30)
 2. Is price above EMA band? → aboveBand
 3. Is price above VWAP? → close > vwapVal
 4. Is RSI bullish? → rsiVal > 55
@@ -106,29 +52,126 @@ The NIFTY row shows the **SUM** of all selected stock contributions — tells yo
 7. Was last signal NOT a buy? → buySignal fires
 8. Label "BUY" plotted below bar in green
 ```
-Same logic inverted for SELL.
+
+### Scalping Tips
+1. Switch to 5m or 15m — VWAP and session filter are intraday tools
+2. Check the table first — if majority stocks show BULL trend, bias long
+3. Contrib column — if NIFTY row shows +ve contribution, bulls are driving index
+4. Wait for signal label — don't anticipate, let all 4 conditions confirm
+5. Use S/R levels alongside — combine with drawn S/R levels for entry precision
+6. Risk management — use a 15–20 pt stop on NIFTY futures/options for scalps
 
 ---
 
-## Scalping Tips Using This Indicator
+## 2. ProfitScout
+**File:** `ProfitScout.pine`
+**Version:** Pine Script v6
+**Best TF:** 5m (intraday scalping)
+**Reverse-engineered from:** User screenshots, Apr 30 2026
 
-1. **Switch to 5m or 15m** — VWAP and session filter are intraday tools
-2. **Check the table first** — if majority stocks show BULL trend, bias long
-3. **Contrib column** — if NIFTY row shows +ve contribution, bulls are driving index
-4. **Wait for signal label** — don't anticipate, let all 4 conditions confirm
-5. **Use S/R levels alongside** — combine with the drawn S/R levels for entry precision
-6. **Risk management** — use a 15–20 pt stop on NIFTY futures/options for scalps
+### What It Does
+Combines Supertrend trend direction with an EMA band zone and ATR-based TP ladder. Fires 5 signal types and tracks an active trade with a live info table — matching the "ProfitScout | TS: 2.8" indicator seen on chart.
+
+### Core Settings
+| Parameter | Default | Description |
+|---|---|---|
+| ATR Period | 14 | ATR length for Supertrend + TP calculation |
+| Trail Stop Mult (TS) | **2.8** | Supertrend ATR multiplier — shown in table header |
+| EMA Length | 20 | Length for EMA High/Low band |
+| TP Step | 1.0x ATR | Each TP level = Entry ± N x ATR x this |
+| Number of TPs | 6 | TP1 through TP6 shown on chart right edge |
+| RSI Min for BC | 50 | BC signal requires RSI above this |
+
+### Signal Types
+
+| Signal | Label | Condition |
+|---|---|---|
+| Buy Confirmed | **BC** | Supertrend flips bullish + above VWAP + RSI > 50 |
+| Buy | **BUY** | Supertrend flips bullish (partial confirmation) |
+| Long Entry | **LE** | Pullback to EMA Low in bull trend + above VWAP |
+| Sell | **SELL** | Supertrend flips bearish |
+| Short | **S** | Price crosses below EMA High in bear trend + below VWAP |
+
+**Signal hierarchy (strongest to weakest):**
+```
+BC   → Full confluence long (trend flip + VWAP + RSI)
+BUY  → Trend flip only
+LE   → Pullback continuation long
+SELL → Primary short (trend flip)
+S    → Short continuation on EMA rejection
+```
+
+### TP Calculation
+```
+ATR is captured at entry and fixed for that trade.
+
+LONG:  TP(n) = Entry + n x ATR x TP Step
+SHORT: TP(n) = Entry - n x ATR x TP Step
+
+Example (ATR=15, TP Step=1.0x, Entry=24,136):
+  TP1 = 24,151  (+15 pts)   ← book 40% here
+  TP2 = 24,166  (+30 pts)
+  TP3 = 24,181  (+45 pts)
+  TP4 = 24,196  (+60 pts)
+  TP5 = 24,211  (+75 pts)
+  TP6 = 24,226  (+90 pts)   ← trail rest to here
+```
+
+### Trailing Stop
+- = Live Supertrend value (moves dynamically with price)
+- Shown in table as "Trail SL"
+- Cell turns RED if price drops to/below trail SL = exit signal
+
+### Info Table (bottom-right)
+```
+┌──────────────────────────┬──────────────┐
+│ ProfitScout | TS: 2.8    │   ▲ LONG     │
+├──────────────────────────┼──────────────┤
+│ Entry Price              │   24136.00   │
+│ Trail SL                 │   24068.18   │
+│ Net Points               │   4.9        │
+│ Next Target              │ TP1 @ 24151  │
+└──────────────────────────┴──────────────┘
+```
+
+### Visual Elements
+| Element | Description |
+|---|---|
+| Green background | Supertrend bullish |
+| Red background | Supertrend bearish |
+| Green Supertrend line | Dynamic support when bullish |
+| Red Supertrend line | Dynamic resistance when bearish |
+| Shaded band (green/red) | EMA High–Low zone, changes colour with trend |
+| MID dots | EMA(close) mid-band line |
+| Orange line | VWAP (daily reset) |
+| TP1–TP6 labels | Right edge — teal = pending, grey = already hit |
+
+### How to Use
+```
+1. Wait for BC or BUY signal (Supertrend flip to bullish)
+2. Confirm price above VWAP and above EMA band
+3. Set hard stop at Trail SL value in table
+4. Book 40% at TP1, trail rest with stop at entry
+5. Use LE signal for re-entry on pullback during trend
+6. Exit all longs on SELL signal
+7. Use S signal for short continuation entries in downtrend
+```
+
+### Tuning Guide
+| Goal | Adjustment |
+|---|---|
+| Fewer, stronger signals | Increase TS to 3.0–3.5 |
+| More sensitive signals | Decrease TS to 2.0–2.5 |
+| Tighter TP spacing | Decrease TP Step to 0.5 |
+| Wider TP spacing | Increase TP Step to 1.5–2.0 |
+| Stricter BC signal | Increase RSI Min for BC to 55 |
 
 ---
 
 ## Files in This Folder
-- `EMA33_VWAP_RSI_DI.pine` — full Pine Script source code
-- `INDICATOR_NOTES.md` — this file (full documentation)
 
----
-
-## MCP Setup Reference
-- Repo: `~/tradingview-mcp-jackson`
-- MCP config: `~/.claude.json` (tradingview server)
-- Node path: `/Users/mac/.nvm/versions/node/v24.15.0/bin/node`
-- Chrome CDP: launch with `--remote-debugging-port=9222 --user-data-dir=/tmp/chrome-cdp-profile`
+| File | Description |
+|---|---|
+| `EMA33_VWAP_RSI_DI.pine` | Original custom indicator — confluence signals with multi-stock table |
+| `ProfitScout.pine` | Supertrend + EMA band + ATR TP ladder — reverse-engineered |
+| `INDICATOR_NOTES.md` | This file — full documentation for both indicators |
