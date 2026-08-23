@@ -18,13 +18,15 @@ import type {
  * say so and link to upload it rather than rendering placeholder numbers.
  */
 export function SectionPanel({ section, basePath, leadId }: { section: SectionView; basePath: string; leadId: string }) {
-  if (section.status === 'missing') return <MissingSection section={section} basePath={basePath} leadId={leadId} />
-
   const hasHero = !!section.hero?.length
   const hero: SectionHero[] = section.hero ?? section.metrics.map((m) => ({ label: m.label, value: m.value }))
 
   return (
     <div className="space-y-4">
+      {/* The section still renders its full shape when the source is absent —
+          every figure reads "—" and this banner says what to go and get. */}
+      {section.status === 'missing' && <SourcePrompt section={section} basePath={basePath} leadId={leadId} />}
+
       {section.meter && <Meter meter={section.meter} />}
       {section.trend && <Trend trend={section.trend} />}
 
@@ -449,38 +451,25 @@ function BandPanel({ panel }: { panel: SectionBandPanel }) {
   )
 }
 
-function MissingSection({ section, basePath, leadId }: { section: SectionView; basePath: string; leadId: string }) {
+function SourcePrompt({ section, basePath, leadId }: { section: SectionView; basePath: string; leadId: string }) {
   return (
-    <Card>
-      <CardHead title={section.label} sub={section.headline} />
-      <CardBody>
-        <div className="rounded-[20px] border border-dashed border-[#dcdbd6] bg-[#efeeeb]/60 px-5 py-8 text-center">
-          <p className="text-[13px] font-semibold text-[#16161a]">Nothing to score yet</p>
-          <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-[#7c7a75]">
-            This section is derived from a parsed <strong className="text-[#5f5d58]">{section.sourceLabel.toLowerCase()}</strong>.
-            {section.sourceType
-              ? ' Upload one and run extraction — the figures below fill in from the document itself.'
-              : ' Fill in the business profile on the Applicant tab to score this section.'}
-          </p>
-          <Link
-            href={section.sourceType ? `${basePath}/${leadId}?tab=documents` : `${basePath}/${leadId}?tab=applicant`}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#1a1917] px-4 py-2 text-[12px] font-semibold text-white hover:opacity-90"
-          >
-            <Upload size={13} />
-            {section.sourceType ? `Upload ${section.sourceLabel.toLowerCase()}` : 'Complete business profile'}
-          </Link>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {section.metrics.map((m) => (
-            <div key={m.label} className="rounded-[20px] bg-[#efeeeb]/60 p-3.5">
-              <p className="text-[10.5px] text-[#7c7a75]">{m.label}</p>
-              <p className="text-[15px] font-semibold text-[#c9c7c1] tnum">—</p>
-            </div>
-          ))}
-        </div>
-      </CardBody>
-    </Card>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-dashed border-[#dcdbd6] bg-[#efeeeb]/70 px-5 py-4">
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-[#16161a]">Nothing to score yet</p>
+        <p className="mt-0.5 text-[12px] leading-relaxed text-[#7c7a75]">
+          {section.sourceType
+            ? <>Every figure below fills in from a parsed <strong className="text-[#5f5d58]">{section.sourceLabel.toLowerCase()}</strong>.</>
+            : <>Every figure below fills in from the business profile on the Applicant tab.</>}
+        </p>
+      </div>
+      <Link
+        href={section.sourceType ? `${basePath}/${leadId}?tab=documents` : `${basePath}/${leadId}?tab=applicant`}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#1a1917] px-4 py-2 text-[12px] font-semibold text-white hover:opacity-90"
+      >
+        <Upload size={13} />
+        {section.sourceType ? `Upload ${section.sourceLabel.toLowerCase()}` : 'Complete business profile'}
+      </Link>
+    </div>
   )
 }
 

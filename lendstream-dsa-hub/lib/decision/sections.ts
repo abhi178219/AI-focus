@@ -276,6 +276,9 @@ export function buildSections(lead: Lead, documents: DocumentRow[]): SectionView
   ]
 }
 
+/** Stand-in for an absent document so a section can still build its skeleton. */
+const EMPTY_SOURCE = { doc: null as unknown as DocumentRow, data: {} as Record<string, unknown> }
+
 function missing(
   key: SectionCode, label: string, sourceType: DocumentType | null, sourceLabel: string, metrics: string[],
 ): SectionView {
@@ -341,9 +344,11 @@ function categoryAmount(raw: unknown, keys: string[]): number | null {
 }
 
 function banking(lead: Lead, documents: DocumentRow[]): SectionView {
-  const src = docOf(documents, 'BANK_STATEMENT')
-  const labels = ['Avg balance', 'Credits 12m', 'Salary credits', 'Bank']
-  if (!src) return missing('BANKING', 'Banking', 'BANK_STATEMENT', 'Bank statement', labels)
+  const found = docOf(documents, 'BANK_STATEMENT')
+  // Build the full section either way. With no statement every value resolves
+  // to null, the tab keeps its shape, and `status` drives the upload prompt.
+  const src = found ?? EMPTY_SOURCE
+  const hasSource = found !== null
 
   const avg = num(src.data.avg_monthly_balance)
   const credits = numList(src.data.monthly_credits)
@@ -428,8 +433,8 @@ function banking(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'BANKING', label: 'Banking', sourceType: 'BANK_STATEMENT', sourceLabel: 'Bank statement',
-    status: 'ready', band,
-    headline: [bankName, str(src.data.account_type)].filter(Boolean).join(' · ') || 'Statement parsed',
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
+    headline: [bankName, str(src.data.account_type)].filter(Boolean).join(' · ') || (hasSource ? 'Statement parsed' : 'Bank statement not on file yet'),
     metrics: [
       { label: 'Avg balance', value: avg !== null ? fmtK(avg) : null },
       { label: 'Credits 12m', value: totalCredits !== null ? fmtCr(totalCredits) : null },
@@ -511,9 +516,9 @@ function banking(lead: Lead, documents: DocumentRow[]): SectionView {
 /* --------------------------------------------------------------------- GST */
 
 function gst(lead: Lead, documents: DocumentRow[]): SectionView {
-  const src = docOf(documents, 'GST_RETURNS')
-  const labels = ['Turnover', 'GSTIN', 'Filing month', 'Monthly avg']
-  if (!src) return missing('GST', 'GST', 'GST_RETURNS', 'GST returns', labels)
+  const found = docOf(documents, 'GST_RETURNS')
+  const src = found ?? EMPTY_SOURCE
+  const hasSource = found !== null
 
   const gstin = str(src.data.gstin)
   const filingMonth = str(src.data.filing_month)
@@ -584,14 +589,14 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'GST', label: 'GST', sourceType: 'GST_RETURNS', sourceLabel: 'GST returns',
-    status: 'ready', band,
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
     headline: knockouts.length
       ? 'Fails GST programme gate'
       : [
           turnover !== null ? `${money(turnover)} turnover` : null,
           yoy === null ? null : yoy >= 0 ? 'growing' : 'declining',
           missed === null ? null : missed === 0 ? 'filings current' : 'filing gaps present',
-        ].filter(Boolean).join(', ') || 'Returns parsed',
+        ].filter(Boolean).join(', ') || (hasSource ? 'Returns parsed' : 'GST returns not on file yet'),
     metrics: [
       { label: 'Turnover', value: turnover !== null ? fmtCr(turnover) : null },
       { label: 'GSTIN', value: gstin },
@@ -690,12 +695,12 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
 /* ------------------------------------------------------------------ bureau */
 
 function bureau(lead: Lead, documents: DocumentRow[]): SectionView {
-  const src = docOf(documents, 'CREDIT_REPORT')
+  const found = docOf(documents, 'CREDIT_REPORT')
+  const src = found ?? EMPTY_SOURCE
   // The CIBIL score can also come straight off the lead record (user-entered),
   // so this section can be partially ready without a bureau report.
-  const score = src ? num(src.data.score) ?? lead.cibil_score : lead.cibil_score
-  const labels = ['Score', 'Live DPD', 'Obligations', 'Vintage']
-  if (score === null && !src) return missing('BUREAU', 'Bureau', 'CREDIT_REPORT', 'Credit report', labels)
+  const score = num(src.data.score) ?? lead.cibil_score
+  const hasSource = found !== null || score !== null
 
   const d = src?.data ?? {}
   const dpdText = str(d.live_dpd)
@@ -785,14 +790,14 @@ function bureau(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'BUREAU', label: 'Bureau', sourceType: 'CREDIT_REPORT', sourceLabel: 'Credit report',
-    status: 'ready', band,
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
     headline: knockouts.length
       ? 'Fails bureau gate'
       : [
           score !== null ? `${score}${policyBand ? ` ${policyBand.label}` : ''}` : null,
           repaymentBand === null ? null : repaymentBand === 'STRONG' ? 'clean track' : 'track record blemishes',
           obligations ? `${money(obligations)} monthly obligation` : null,
-        ].filter(Boolean).join(' · ') || 'On file',
+        ].filter(Boolean).join(' · ') || (hasSource ? 'On file' : 'Credit report not on file yet'),
     metrics: [
       { label: 'Score', value: score !== null ? String(score) : null },
       { label: 'Live DPD', value: liveDpdValue },
@@ -914,9 +919,9 @@ function finYear(o: Record<string, unknown>, fallbackLabel: string): FinYear {
 }
 
 function financials(lead: Lead, documents: DocumentRow[]): SectionView {
-  const src = docOf(documents, 'FINANCIAL_STATEMENT') ?? docOf(documents, 'ITR')
-  const labels = ['Revenue', 'EBITDA', 'PAT', 'Net worth']
-  if (!src) return missing('FINANCIALS', 'Financials', 'FINANCIAL_STATEMENT', 'Financial statement or ITR', labels)
+  const found = docOf(documents, 'FINANCIAL_STATEMENT') ?? docOf(documents, 'ITR')
+  const src = found ?? EMPTY_SOURCE
+  const hasSource = found !== null
 
   const d = src.data
   const yearRows = arr(d.years)
@@ -1007,9 +1012,9 @@ function financials(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'FINANCIALS', label: 'Financials', sourceType: 'FINANCIAL_STATEMENT', sourceLabel: 'Financial statement or ITR',
-    status: 'ready', band,
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
     headline: [year ? `FY ${year}` : null, pat !== null ? `PAT ${money(pat)}` : grossIncome !== null ? `Gross income ${money(grossIncome)}` : null]
-      .filter(Boolean).join(' · ') || 'Parsed',
+      .filter(Boolean).join(' · ') || (hasSource ? 'Parsed' : 'Financial statement or ITR not on file yet'),
     metrics: [
       { label: 'Revenue', value: revenue !== null ? fmtCr(revenue) : grossIncome !== null ? fmtL(grossIncome) : null },
       { label: 'EBITDA', value: ebitda !== null ? fmtL(ebitda) : null },
@@ -1047,16 +1052,10 @@ const CONSTITUTION_LABEL: Record<string, string> = {
 }
 
 function business(lead: Lead, documents: DocumentRow[]): SectionView {
-  const has = lead.business_name || lead.business_vintage_years !== null || lead.industry
   const labels = ['Vintage', 'Constitution', 'Industry', 'Entity']
-  if (!has) {
-    return {
-      key: 'BUSINESS', label: 'Business', sourceType: null, sourceLabel: 'Business profile',
-      status: 'missing', band: null,
-      headline: 'Business profile not filled in yet',
-      metrics: labels.map((l) => ({ label: l, value: null })),
-    }
-  }
+  // No early return: the tab keeps its full shape whether or not the profile
+  // has been filled in, and `status` drives the prompt at the top.
+  const hasSource = Boolean(lead.business_name || lead.business_vintage_years !== null || lead.industry)
 
   const vintage = lead.business_vintage_years
   const band: Band | null = vintage === null ? null
@@ -1143,12 +1142,12 @@ function business(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'BUSINESS', label: 'Business', sourceType: null, sourceLabel: 'Business profile',
-    status: 'ready', band,
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
     headline: [
       vintage !== null ? `${vintage.toFixed(0)}-year ${constitutionLabel?.toLowerCase() ?? 'business'}` : lead.business_name,
       cycleDays !== null ? `${cycleDays}-day cycle` : null,
       structure ? `${structure.toLowerCase()} indicated` : null,
-    ].filter(Boolean).join(' · ') || lead.business_name || 'Business profile on file',
+    ].filter(Boolean).join(' · ') || lead.business_name || (hasSource ? 'Business profile on file' : 'Business profile not filled in yet'),
     metrics: [
       { label: 'Vintage', value: vintage !== null ? `${vintage}y` : null },
       { label: 'Constitution', value: constitutionLabel },
@@ -1235,9 +1234,9 @@ function business(lead: Lead, documents: DocumentRow[]): SectionView {
 /* ------------------------------------------------------------------- stock */
 
 function stock(lead: Lead, documents: DocumentRow[]): SectionView {
-  const src = docOf(documents, 'STOCK_STATEMENT')
-  const labels = ['Gross stock', 'Book debts', 'Creditors', 'Drawing power']
-  if (!src) return missing('STOCK', 'Stock', 'STOCK_STATEMENT', 'Stock statement', labels)
+  const found = docOf(documents, 'STOCK_STATEMENT')
+  const src = found ?? EMPTY_SOURCE
+  const hasSource = found !== null
 
   const d = src.data
   const rawMaterial = num(d.raw_material)
@@ -1272,8 +1271,8 @@ function stock(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'STOCK', label: 'Stock', sourceType: 'STOCK_STATEMENT', sourceLabel: 'Stock statement',
-    status: 'ready', band,
-    headline: drawingPower !== null ? `Drawing power ${money(drawingPower)}` : 'Statement parsed',
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
+    headline: drawingPower !== null ? `Drawing power ${money(drawingPower)}` : (hasSource ? 'Statement parsed' : 'Stock statement not on file yet'),
     metrics: [
       { label: 'Gross stock', value: grossStock !== null ? fmtL(grossStock) : null },
       { label: 'Book debts', value: bookDebts !== null ? fmtL(bookDebts) : null },
@@ -1352,7 +1351,7 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
       }],
     }
   }
-  if (value === null) return missing('COLLATERAL', 'Collateral', 'PROPERTY_VALUATION', 'Valuation report', labels)
+  const hasSource = value !== null
 
   const propertyType = str(d.property_type)?.toUpperCase().replace(/\s+/g, '_') ?? null
   const realisable = num(d.realisable_value)
@@ -1372,12 +1371,12 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
   const requested = Number(lead.requested_amount)
   const ltvCapRate = propertyType ? COLLATERAL_POLICY.ltvCaps[propertyType] ?? null : null
   const ltvCapPercent = ltvCapRate !== null ? ltvCapRate * 100 : null
-  const maxFundingAtCap = ltvCapRate !== null ? value * ltvCapRate : null
+  const maxFundingAtCap = ltvCapRate !== null && value !== null ? value * ltvCapRate : null
   const netCollateralAvailable = maxFundingAtCap !== null
     ? Math.max(0, maxFundingAtCap - (encumbrance ?? 0)) : null
 
-  const grossLtv = value > 0 ? (requested / value) * 100 : null
-  const netLtv = value > 0 ? ((requested + (encumbrance ?? 0)) / value) * 100 : null
+  const grossLtv = value !== null && value > 0 ? (requested / value) * 100 : null
+  const netLtv = value !== null && value > 0 ? ((requested + (encumbrance ?? 0)) / value) * 100 : null
   const realisableLtv = realisable && realisable > 0 ? (requested / realisable) * 100 : null
   const cover = realisable !== null && requested > 0 ? realisable / requested : null
 
@@ -1420,15 +1419,15 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
 
   return {
     key: 'COLLATERAL', label: 'Collateral', sourceType: 'PROPERTY_VALUATION', sourceLabel: 'Valuation report',
-    status: 'ready', band,
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
     headline: [
       money(value),
       propertyType ? propertyType.toLowerCase() : null,
       netLtv !== null ? `${netLtv.toFixed(0)}% net LTV${ltvCapPercent !== null ? ` against ${ltvCapPercent}% cap` : ''}` : null,
       cover !== null ? `${cover.toFixed(2)}× cover` : null,
-    ].filter(Boolean).join(' · ') || 'Valued',
+    ].filter(Boolean).join(' · ') || (hasSource ? 'Valued' : 'Valuation report not on file yet'),
     metrics: [
-      { label: 'Value', value: fmtCr(value) },
+      { label: 'Value', value: value !== null ? fmtCr(value) : null },
       { label: 'Net LTV', value: ltv !== null ? pct(ltv) : null },
       { label: 'Requested', value: fmtL(requested) },
       { label: 'Location', value: lead.property_city },
@@ -1475,7 +1474,7 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
         {
           label: 'Market value', value: money(value), band: 'GOOD',
           note: realisable !== null
-            ? `Realisable ${money(realisable)}${value > 0 ? ` (${((realisable / value) * 100).toFixed(0)}% of market)` : ''}`
+            ? `Realisable ${money(realisable)}${value !== null && value > 0 ? ` (${((realisable / value) * 100).toFixed(0)}% of market)` : ''}`
             : undefined,
         },
         {
@@ -1537,7 +1536,7 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
     capacity: {
       label: 'Implied capacity',
       value: money(netCollateralAvailable),
-      basis: netCollateralAvailable !== null
+      basis: netCollateralAvailable !== null && value !== null
         ? `${ltvCapPercent}% of ${money(value)} less ${money(encumbrance ?? 0)} existing charge`
         : 'Needs a valued property and an LTV cap on the product to compute headroom.',
     },
