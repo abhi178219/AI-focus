@@ -206,9 +206,20 @@ function SectionCard({
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
             {section.fields.map((f, i) => {
               const raw = f.format ? f.format(lead) : displayValue(lead, f)
+              const fromDoc = lead.fields_from_documents?.includes(f.name)
               return (
                 <div key={`${f.name}-${i}`} className={f.wide ? 'col-span-2 sm:col-span-3 lg:col-span-4' : ''}>
-                  <p className="text-[10px] uppercase tracking-wide text-[#7c7a75]">{f.label}</p>
+                  <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#7c7a75]">
+                    {f.label}
+                    {fromDoc && raw && (
+                      <span
+                        title="Filled from a parsed document — edit to override"
+                        className="rounded-full bg-[#eef1fe] px-1.5 py-px text-[8.5px] font-bold tracking-normal text-[#2440e8]"
+                      >
+                        DOC
+                      </span>
+                    )}
+                  </p>
                   <p className={`text-[12.5px] font-semibold ${raw ? 'text-[#16161a]' : 'text-[#c9c7c1]'}`}>{raw ?? '—'}</p>
                 </div>
               )
