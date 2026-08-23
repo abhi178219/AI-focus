@@ -98,6 +98,10 @@ export interface LenderProduct {
   max_tenure_years: number
   processing_fee_percent: number
   is_active: boolean
+  /** Indicative lender turnaround, in days. Null when not configured. */
+  turnaround_days: number | null
+  /** Free-text credit-box note shown against the offer, e.g. security preference. */
+  credit_box_note: string | null
   created_at: string
 }
 

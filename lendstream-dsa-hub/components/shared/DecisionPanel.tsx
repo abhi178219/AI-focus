@@ -1,11 +1,13 @@
-import { Layers, Scale, AlertOctagon } from 'lucide-react'
+import { Layers, Scale, AlertOctagon, Gauge } from 'lucide-react'
 import { Card, CardHead, CardBody } from '@/components/ui/Card'
-import { BandBar } from '@/components/ui/BandPill'
+import { BandBar, BandPill } from '@/components/ui/BandPill'
 import { BandRing } from '@/components/shared/BandRing'
 import { StatTile, KeyValueRow } from '@/components/shared/StatTile'
 import { RunAssessmentButton } from '@/components/shared/RunAssessmentButton'
 import { fmtAmount } from '@/lib/format'
+import { buildQualityFactors } from '@/lib/decision/qualityFactors'
 import {
+  BAND_SOLID,
   type Lead, type DocumentRow, type Assessment, type AssessmentPillar,
   type Product, type LenderProduct, type Band, type Verdict,
 } from '@/lib/types'
@@ -149,6 +151,12 @@ export function DecisionPanel({
   const conditions = assessment.watch_items ?? []
   const knockouts = assessment.knockouts ?? []
 
+  // Quality signals adjust how much of the assessed capacity we'd stand behind.
+  const quality = buildQualityFactors(documents)
+  const afterHaircut = assessment.governing_capacity != null
+    ? Number(assessment.governing_capacity) * (1 - quality.haircutPercent / 100)
+    : null
+
   return (
     <div className="space-y-4">
       <Card>
@@ -170,11 +178,24 @@ export function DecisionPanel({
               Rules {assessment.rules_version} · {new Date(assessment.computed_at).toLocaleString('en-IN')}
             </p>
           </div>
-          <div className="grid shrink-0 grid-cols-2 gap-3">
+          <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-3">
             <StatTile
               label="Assessed"
               value={assessment.governing_capacity != null ? fmtAmount(Number(assessment.governing_capacity)) : '—'}
               sub={assessment.binding_constraint ?? 'No binding constraint recorded'}
+            />
+            <StatTile
+              label="After quality haircut"
+              value={afterHaircut != null ? fmtAmount(afterHaircut) : '—'}
+              sub={
+                afterHaircut == null
+                  // Don't claim a haircut was "applied" when there is no capacity to apply it to.
+                  ? (quality.haircutPercent > 0 ? `${quality.haircutPercent}% would apply` : 'No assessed capacity yet')
+                  : quality.factors.length === 0 ? 'No quality signals parsed yet'
+                  : quality.haircutPercent === 0 ? 'No haircut applied'
+                  : `${quality.haircutPercent}% applied`
+              }
+              band={quality.haircutPercent === 0 ? null : quality.haircutPercent >= 8 ? 'WEAK' : 'MODERATE'}
             />
             <StatTile
               label="Requested"
@@ -259,6 +280,42 @@ export function DecisionPanel({
                 <p className="text-[12px] text-[#7c7a75]">
                   Not enough extracted sources to triangulate — at least two of GST returns, bank statement and financial statement must be parsed.
                 </p>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHead
+              title="Quality factors"
+              sub="Banking, GST and counterparty signals that adjust confidence"
+              icon={<Gauge size={16} />}
+              right={
+                quality.haircutPercent > 0
+                  ? <span className="rounded-full bg-[#f7f0e2] px-2.5 py-1 text-[11px] font-semibold text-[#85580d] tnum">
+                      {quality.haircutPercent}% haircut
+                    </span>
+                  : undefined
+              }
+            />
+            <CardBody className="py-1">
+              {quality.factors.length === 0 ? (
+                <p className="py-3 text-[12px] text-[#7c7a75]">
+                  No quality signals yet — these come from a parsed bank statement and GST returns.
+                </p>
+              ) : (
+                quality.factors.map((f) => (
+                  <div key={f.label} className="flex items-start gap-3 border-b border-[#dcdbd6]/70 py-2.5 last:border-0">
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${BAND_SOLID[f.band]}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12.5px] font-medium text-[#16161a]">{f.label}</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-[#7c7a75]">{f.detail}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-[11px] text-[#5f5d58]">{f.effect}</span>
+                      <BandPill band={f.band} size="xs" />
+                    </div>
+                  </div>
+                ))
               )}
             </CardBody>
           </Card>

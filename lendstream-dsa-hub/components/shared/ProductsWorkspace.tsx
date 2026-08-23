@@ -132,6 +132,7 @@ export async function ProductsWorkspace({ view, basePath }: { view: string; base
                         <th className="px-4 py-2.5 font-medium">Max sanction</th>
                         <th className="px-4 py-2.5 font-medium">Tenure</th>
                         <th className="px-4 py-2.5 font-medium">Fee</th>
+                        <th className="px-4 py-2.5 font-medium">TAT</th>
                         <th className="px-4 py-2.5 font-medium">Status</th>
                       </tr>
                     </thead>
@@ -141,12 +142,16 @@ export async function ProductsWorkspace({ view, basePath }: { view: string; base
                           <td className="px-4 py-2.5">
                             <span className="mr-2 inline-block rounded-md bg-white px-1.5 py-0.5 text-[10px] font-bold text-[#47453f]">{o.short_code}</span>
                             <span className="font-semibold text-[#16161a]">{o.display_name}</span>
+                            {o.credit_box_note && <p className="mt-0.5 text-[10.5px] text-[#7c7a75]">{o.credit_box_note}</p>}
                           </td>
                           <td className="px-4 py-2.5 text-[#5f5d58]">{o.lender_name}</td>
                           <td className="px-4 py-2.5 font-semibold text-[#16161a] tnum">{Number(o.interest_rate).toFixed(2)}%</td>
                           <td className="px-4 py-2.5 text-[#5f5d58] tnum">{fmtAmount(Number(o.max_sanction_amount))}</td>
                           <td className="px-4 py-2.5 text-[#5f5d58] tnum">{o.min_tenure_years}–{o.max_tenure_years} yrs</td>
                           <td className="px-4 py-2.5 text-[#5f5d58] tnum">{Number(o.processing_fee_percent).toFixed(2)}%</td>
+                          <td className={`px-4 py-2.5 tnum ${o.turnaround_days != null ? 'text-[#5f5d58]' : 'text-[#c9c7c1]'}`}>
+                            {o.turnaround_days != null ? `${o.turnaround_days}d` : '—'}
+                          </td>
                           <td className="px-4 py-2.5">
                             <Badge className={o.is_active ? 'bg-[#e8f3ee] text-[#16694a]' : 'bg-[#efeeeb] text-[#7c7a75]'}>
                               {o.is_active ? 'Active' : 'Inactive'}

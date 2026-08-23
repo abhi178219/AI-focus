@@ -8,7 +8,7 @@ import { calculateEmi } from '@/lib/decision/rulesEngine'
 import { Card, CardHead, CardBody } from '@/components/ui/Card'
 import { Badge } from './Badge'
 import { fmtAmount } from '@/lib/format'
-import type { LenderOffer, LenderProduct } from '@/lib/types'
+import { BAND_STYLES, type Band, type LenderOffer, type LenderProduct } from '@/lib/types'
 
 type State = { error?: string }
 
@@ -37,14 +37,65 @@ interface RankedOffer {
   feePercent: number
   feeAmount: number
   cappedByCapacity: boolean
+  tatDays: number | null
+  /** Credit-box match, 0-100, computed from real comparisons. Null if unscorable. */
+  fit: number | null
+}
+
+
+/**
+ * Credit-box fit, 0-100. A transparent match score computed only from real
+ * comparisons between this lead's ask and the lender's configured product:
+ * does the cap cover the request, does the tenure fit the band, and how the
+ * rate sits within the range on offer. It is NOT a lender's own scorecard —
+ * it deliberately does not invent any lender-side risk appetite.
+ * Returns null when there is nothing meaningful to compare against.
+ */
+function fitScore(
+  lp: LenderProduct,
+  requestedAmount: number,
+  tenureYears: number,
+  rateBounds: { min: number; max: number } | null,
+): number | null {
+  const parts: number[] = []
+
+  // Sanction coverage — can this lender fund the ask at all?
+  if (requestedAmount > 0) {
+    const coverage = Number(lp.max_sanction_amount) / requestedAmount
+    parts.push(coverage >= 1 ? 100 : Math.max(0, coverage * 100))
+  }
+
+  // Tenure fit — is the requested tenure inside this product's band?
+  if (tenureYears > 0) {
+    const lo = Number(lp.min_tenure_years)
+    const hi = Number(lp.max_tenure_years)
+    parts.push(tenureYears >= lo && tenureYears <= hi ? 100 : 55)
+  }
+
+  // Rate position — cheapest on the table scores highest.
+  if (rateBounds && rateBounds.max > rateBounds.min) {
+    const pos = (Number(lp.interest_rate) - rateBounds.min) / (rateBounds.max - rateBounds.min)
+    parts.push(100 - pos * 45)
+  }
+
+  if (!parts.length) return null
+  return Math.round(parts.reduce((s, v) => s + v, 0) / parts.length)
+}
+
+function fitBand(fit: number): Band {
+  if (fit >= 85) return 'STRONG'
+  if (fit >= 70) return 'GOOD'
+  if (fit >= 55) return 'MODERATE'
+  if (fit >= 40) return 'WEAK'
+  return 'CRITICAL'
 }
 
 /**
  * Offers tab. The ranked table, the "Best rate" badge and the side-by-side
  * comparison matrix all mirror the prototype. Every figure is derived from a
  * real `lender_products` row plus this lead's requested amount, tenure and
- * assessed capacity — nothing is synthesised. TAT and lender perks have no
- * column in our catalogue, so they render as "—" rather than invented copy.
+ * assessed capacity — nothing is synthesised. TAT and the credit-box note come
+ * from the catalogue row and render as "—" until ops configures them.
  */
 export function OffersPanel({
   leadId, offers, lenderProducts, requestedAmount, tenureYears, assessedCapacity,
@@ -72,6 +123,8 @@ export function OffersPanel({
   const alreadyAdded = new Set(offers.map((o) => o.bank_name))
 
   const ranked = useMemo<RankedOffer[]>(() => {
+    const rates = lenderProducts.map((lp) => Number(lp.interest_rate))
+    const rateBounds = rates.length ? { min: Math.min(...rates), max: Math.max(...rates) } : null
     const rows = lenderProducts.map((lp) => {
       const lenderCap = Number(lp.max_sanction_amount)
       const capacityCap = assessedCapacity != null && assessedCapacity > 0 ? assessedCapacity : null
@@ -82,7 +135,7 @@ export function OffersPanel({
       return {
         id: lp.id,
         lender: lp.lender_name,
-        note: lp.display_name,
+        note: lp.credit_box_note ?? lp.display_name,
         rate: Number(lp.interest_rate),
         maxSanction,
         quotedAmount,
@@ -91,6 +144,8 @@ export function OffersPanel({
         feePercent: Number(lp.processing_fee_percent),
         feeAmount: (quotedAmount * Number(lp.processing_fee_percent)) / 100,
         cappedByCapacity: capacityCap != null && capacityCap < lenderCap,
+        tatDays: lp.turnaround_days ?? null,
+        fit: fitScore(lp, requestedAmount, tenureYears, rateBounds),
       }
     })
     const sorted = [...rows]
@@ -196,8 +251,14 @@ export function OffersPanel({
                     </td>
                     <td className="px-4 py-3 text-right text-[12px] text-[#47453f] tnum">{fmtAmount(Math.round(r.emi))}</td>
                     <td className="px-4 py-3 text-right text-[12px] text-[#5f5d58] tnum">{r.feePercent}%</td>
-                    <td className="px-4 py-3 text-right text-[12px] text-[#c9c7c1]">—</td>
-                    <td className="px-4 py-3 text-right text-[12px] text-[#c9c7c1]">—</td>
+                    <td className={`px-4 py-3 text-right text-[12px] tnum ${r.tatDays != null ? 'text-[#5f5d58]' : 'text-[#c9c7c1]'}`}>
+                      {r.tatDays != null ? `${r.tatDays}d` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {r.fit != null
+                        ? <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold tnum ${BAND_STYLES[fitBand(r.fit)]}`}>{r.fit}</span>
+                        : <span className="text-[12px] text-[#c9c7c1]">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <button
                         type="button"
@@ -222,7 +283,9 @@ export function OffersPanel({
                 ? `the assessed capacity of ${fmtAmount(assessedCapacity)}`
                 : `the requested amount of ${fmtAmount(requestedAmount)}`}{' '}
               at a {tenureYears}-year tenure. Final terms are set by the lender after their own underwriting.
-              Turnaround time and fit score are not held in the catalogue, so they show as “—”.
+              Fit is a match score between this ask and each lender’s configured product — sanction coverage,
+              tenure fit and rate position — not the lender’s own scorecard. Turnaround comes from the
+              catalogue and shows as “—” until it is set.
             </p>
           </CardBody>
         )}

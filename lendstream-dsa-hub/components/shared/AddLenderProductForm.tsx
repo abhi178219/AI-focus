@@ -50,6 +50,8 @@ export function AddLenderProductForm({ products, canEdit }: { products: Product[
           </div>
         </Field>
         <Field label="Processing fee (%)"><input name="processing_fee_percent" type="number" step="0.05" defaultValue={1} className={inputClass} /></Field>
+        <Field label="Turnaround (days)"><input name="turnaround_days" type="number" min="1" placeholder="14" className={inputClass} /></Field>
+        <Field label="Credit-box note"><input name="credit_box_note" placeholder="Prefers self-occupied residential security" className={inputClass} /></Field>
       </div>
 
       <div className="mt-3 flex items-center gap-3">

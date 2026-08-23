@@ -26,6 +26,8 @@ export async function addLenderProduct(formData: FormData) {
     min_tenure_years: num(formData.get('min_tenure_years')),
     max_tenure_years: num(formData.get('max_tenure_years')),
     processing_fee_percent: num(formData.get('processing_fee_percent')) ?? 1,
+    turnaround_days: num(formData.get('turnaround_days')),
+    credit_box_note: String(formData.get('credit_box_note') ?? '').trim() || null,
     created_by: user.id,
   }
 

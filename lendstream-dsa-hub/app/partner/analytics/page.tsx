@@ -39,6 +39,36 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
 
   const { data: slabs } = await supabase.from('commission_slabs').select('*').order('bank_name')
 
+  // Partner display names for the pass-rate breakdown. RLS decides which of
+  // these are readable; an unreadable one falls back to a short id.
+  const passRateAgentIds = [...new Set(rows.map((l) => l.agent_id))]
+  const { data: agentProfileRows } = passRateAgentIds.length
+    ? await supabase.from('profiles').select('id, full_name').in('id', passRateAgentIds)
+    : { data: [] as { id: string; full_name: string | null }[] }
+  const agentNameById = new Map((agentProfileRows ?? []).map((p) => [p.id, p.full_name ?? null]))
+
+  // Pivot slabs to one row per bank with a PL / HL rate range, as the prototype.
+  // A bank with no slab in a category shows "N/A" — never an assumed rate.
+  const slabRows = (slabs ?? []) as {
+    bank_name: string; product_category: string; commission_percent: number; payout_cycle: string | null
+  }[]
+  const byBankRate = new Map<string, { pl: number[]; hl: number[]; cycle: string | null }>()
+  for (const s of slabRows) {
+    const e = byBankRate.get(s.bank_name) ?? { pl: [], hl: [], cycle: null }
+    if (s.product_category === 'PL') e.pl.push(Number(s.commission_percent))
+    if (s.product_category === 'HL') e.hl.push(Number(s.commission_percent))
+    e.cycle = e.cycle ?? s.payout_cycle ?? null
+    byBankRate.set(s.bank_name, e)
+  }
+  const rateRange = (v: number[]) =>
+    v.length === 0 ? null
+      : v.length === 1 || Math.min(...v) === Math.max(...v)
+        ? `${v[0].toFixed(2)}%`
+        : `${Math.min(...v).toFixed(2)}% – ${Math.max(...v).toFixed(2)}%`
+  const bankRows = [...byBankRate.entries()]
+    .map(([bank, e]) => ({ bank, pl: rateRange(e.pl), hl: rateRange(e.hl), cycle: e.cycle }))
+    .sort((a, b) => a.bank.localeCompare(b.bank))
+
   const disbursedLeads = rows.filter((l) => l.stage === 'DISBURSED' && l.disbursed_amount)
   const totalDisbursed = disbursedLeads.reduce((s, l) => s + Number(l.disbursed_amount), 0)
   const earnedCommission = disbursedLeads.reduce((sum, l) => {
@@ -153,7 +183,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           <div className="space-y-2">
             {[...byAgent.entries()].map(([agentId, { pass, total }]) => (
               <div key={agentId} className="flex items-center justify-between rounded-2xl bg-[#efeeeb] px-4 py-2 text-sm">
-                <span className="font-medium text-[#16161a]">{agentId.slice(0, 8)}…</span>
+                <span className="font-medium text-[#16161a]">{agentNameById.get(agentId) ?? `${agentId.slice(0, 8)}…`}</span>
                 <span className="text-[#5f5d58]">{pass}/{total} ({((pass / total) * 100).toFixed(0)}%)</span>
               </div>
             ))}
@@ -161,36 +191,47 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         </section>
       </div>
 
-      <section>
-        <h2 className="mb-3 text-lg font-medium text-[#16161a]">Commission &amp; Earnings Estimator</h2>
-        <CommissionCalculator slabs={slabs ?? []} />
-      </section>
+      <CommissionCalculator slabs={slabs ?? []} />
 
       <section className="rounded-[28px] bg-[#f7f6f4] p-6 elev">
-        <h2 className="mb-4 text-sm font-medium text-[#16161a]">Bank Commission Slab Structure &amp; Payout Rates</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[#efeeeb] text-left text-[11px] uppercase tracking-wide text-[#7c7a75]">
-              <th className="py-2 font-medium">Bank</th><th className="py-2 font-medium">Category</th><th className="py-2 font-medium">Slab</th>
-              <th className="py-2 font-medium">Commission</th><th className="py-2 font-medium">Payout cycle</th><th className="py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(slabs ?? []).map((s) => (
-              <tr key={s.id} className="border-b border-[#f4f3f0] last:border-0">
-                <td className="py-2 font-medium text-[#16161a]">{s.bank_name}</td>
-                <td className="py-2 text-[#5f5d58]">{s.product_category}</td>
-                <td className="py-2 text-[#5f5d58]">₹{(s.slab_min_amount / 100000).toFixed(1)}L – {s.slab_max_amount ? `₹${(s.slab_max_amount / 100000).toFixed(1)}L` : '∞'}</td>
-                <td className="py-2 text-[#5f5d58]">{s.commission_percent}%</td>
-                <td className="py-2 text-[#5f5d58]">Monthly</td>
-                <td className="py-2"><span className="rounded-full bg-[#e8f3ee] px-2 py-0.5 text-xs text-[#16694a]">Active</span></td>
+        <div className="mb-1 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-[#16161a]">Bank commission slab structure &amp; payout rates</h2>
+            <p className="text-[11px] text-[#7c7a75]">Standard payout percentages offered by partner banks for DSAs</p>
+          </div>
+          <span className="shrink-0 rounded-full bg-[#e8f3ee] px-2.5 py-1 text-[11px] font-semibold text-[#16694a]">
+            {bankRows.length} configured
+          </span>
+        </div>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[680px] text-[12.5px]">
+            <thead>
+              <tr className="border-b border-[#dcdbd6] text-left text-[10px] uppercase tracking-wide text-[#7c7a75]">
+                <th className="py-2.5 font-medium">Partner bank</th>
+                <th className="py-2.5 font-medium">Personal loan (PL)</th>
+                <th className="py-2.5 font-medium">Home loan (HL)</th>
+                <th className="py-2.5 font-medium">Payout cycle</th>
+                <th className="py-2.5 font-medium">Status</th>
               </tr>
-            ))}
-            {(!slabs || slabs.length === 0) && (
-              <tr><td colSpan={6} className="py-6 text-center text-[#c9c7c1]">No commission slabs configured yet.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {bankRows.map((b) => (
+                <tr key={b.bank} className="border-b border-[#e7e6e2] last:border-0">
+                  <td className="py-2.5 font-semibold text-[#16161a]">{b.bank}</td>
+                  <td className={`py-2.5 tnum ${b.pl ? 'text-[#5f5d58]' : 'text-[#c9c7c1]'}`}>{b.pl ?? 'N/A'}</td>
+                  <td className={`py-2.5 tnum ${b.hl ? 'text-[#5f5d58]' : 'text-[#c9c7c1]'}`}>{b.hl ?? 'N/A'}</td>
+                  <td className={`py-2.5 ${b.cycle ? 'text-[#5f5d58]' : 'text-[#c9c7c1]'}`}>{b.cycle ?? '—'}</td>
+                  <td className="py-2.5">
+                    <span className="rounded-full bg-[#e8f3ee] px-2 py-0.5 text-[11px] font-semibold text-[#16694a]">Active</span>
+                  </td>
+                </tr>
+              ))}
+              {bankRows.length === 0 && (
+                <tr><td colSpan={5} className="py-6 text-center text-[#c9c7c1]">No commission slabs configured yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   )
