@@ -53,6 +53,13 @@ export function SectionPanel({ section, basePath, leadId }: { section: SectionVi
                   </tr>
                 </thead>
                 <tbody>
+                  {t.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={t.columns.length} className="px-4 py-6 text-center text-[12px] text-[#a8a6a0]">
+                        {t.emptyText ?? 'Not itemised in the parsed document.'}
+                      </td>
+                    </tr>
+                  )}
                   {t.rows.map((row, i) => (
                     <tr key={i} className={`border-b border-[#e0dfda] last:border-0 ${t.emphasise?.includes(i) ? 'bg-[#e3e2de]/60 font-semibold' : ''}`}>
                       {row.map((cell, j) => (
@@ -356,6 +363,9 @@ function Breakdown({ data }: { data: SectionBreakdown }) {
     <Card>
       <CardHead title={data.title} sub={data.sub} />
       <CardBody className="py-1">
+        {data.rows.length === 0 && (
+          <p className="py-3 text-[12px] text-[#a8a6a0]">Not itemised in the parsed document.</p>
+        )}
         {data.rows.map((r, i) => (
           <div key={i} className="flex items-center gap-3 border-b border-[#dcdbd6]/70 py-2.5 last:border-0">
             <div className="min-w-0 flex-1">

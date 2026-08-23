@@ -42,6 +42,8 @@ export interface SectionTable {
   sub?: string
   columns: string[]
   rows: (string | null)[][]
+  /** Shown in place of rows when the parse yielded none. */
+  emptyText?: string
   /** Row indices rendered as totals / emphasised heads. */
   emphasise?: number[]
 }
@@ -441,14 +443,17 @@ function banking(lead: Lead, documents: DocumentRow[]): SectionView {
       { label: 'Bounces', value: bounces !== null ? String(bounces) : null, sub: 'Returns in period', band: conductBand },
       { label: 'Cash deposits', value: cashPct !== null ? pct(cashPct) : null, sub: 'Of total credits', band: cashPct === null ? null : cashPct > 25 ? 'WEAK' : 'STRONG' },
     ],
-    tables: monthRows.length
-      ? [{
-          title: 'Month-by-month statement analysis',
-          sub: 'Credits, debits, closing balance and returns',
-          columns: ['Month', 'Credits', 'Debits', 'Closing', 'ABB', 'Min bal', 'Bounces'],
-          rows: monthRows,
-        }]
-      : undefined,
+    // The statement sections below always render, even when the parse yielded
+    // nothing for them. Hiding a card when its data is missing makes the tab
+    // change shape file-to-file and hides the fact that a figure was expected;
+    // an empty card with an honest line tells the user what to go and get.
+    tables: [{
+      title: 'Month-by-month statement analysis',
+      sub: 'Credits, debits, closing balance and returns',
+      columns: ['Month', 'Credits', 'Debits', 'Closing', 'ABB', 'Min bal', 'Bounces'],
+      rows: monthRows,
+      emptyText: 'The parsed statement did not include a month-by-month breakdown.',
+    }],
     panels: [
       {
         title: 'Account',
@@ -472,26 +477,20 @@ function banking(lead: Lead, documents: DocumentRow[]): SectionView {
           }]
         : []),
     ],
-    subHero: hasCounterparties || netBusinessReceipts !== null
-      ? [
+    subHero: [
           { label: 'Top payer', value: pct0(topPayer), sub: inflows[0]?.name ?? null, band: concentrationBand(topPayer) },
           { label: 'Top 5 payers', value: pct0(topFivePayer), sub: 'Of business receipts', band: topFivePayer === null ? null : topFivePayer >= 80 ? 'WEAK' : 'GOOD' },
           { label: 'Top supplier', value: pct0(topSupplier), sub: outflows[0]?.name ?? null, band: concentrationBand(topSupplier) },
-          { label: 'Net business receipts', value: money(netBusinessReceipts), sub: nonBusinessPct !== null ? `${nonBusinessPct.toFixed(0)}% excluded as non-business` : null },
-        ]
-      : undefined,
-    ranked: hasCounterparties
-      ? [
-          { title: 'Money received from', sub: 'Largest payers over the statement period', rows: inflows },
-          { title: 'Money paid to', sub: 'Largest suppliers and vendors', rows: outflows },
-        ]
-      : undefined,
-    breakdowns: inflowCats.length || outflowCats.length
-      ? [
-          ...(inflowCats.length ? [{ title: 'Where credits came from', sub: 'Every rupee classified', rows: inflowCats }] : []),
-          ...(outflowCats.length ? [{ title: 'Where debits went', sub: 'Every rupee classified', rows: outflowCats }] : []),
-        ]
-      : undefined,
+      { label: 'Net business receipts', value: money(netBusinessReceipts), sub: nonBusinessPct !== null ? `${nonBusinessPct.toFixed(0)}% excluded as non-business` : null },
+    ],
+    ranked: [
+      { title: 'Money received from', sub: 'Largest payers over the statement period', rows: inflows },
+      { title: 'Money paid to', sub: 'Largest suppliers and vendors', rows: outflows },
+    ],
+    breakdowns: [
+      { title: 'Where credits came from', sub: 'Every rupee classified', rows: inflowCats },
+      { title: 'Where debits went', sub: 'Every rupee classified', rows: outflowCats },
+    ],
     notes: observations.length
       ? { title: 'What the statement says', sub: 'Read across counterparties, categories and conduct', items: observations }
       : undefined,
