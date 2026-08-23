@@ -62,22 +62,11 @@ export function DecisionPanel({
 }) {
   const tenureYears = lead.tenure_years ?? product?.max_tenure_years ?? null
 
-  if (!assessment) {
-    return (
-      <Card>
-        <CardHead
-          title="Decision"
-          sub="Deterministic rules engine — the model extracts, the rules decide"
-          right={<RunAssessmentButton kind="lead" id={leadId} disabled={documents.length === 0} />}
-        />
-        <CardBody>
-          <p className="text-[12.5px] text-[#7c7a75]">
-            No assessment yet — upload and parse documents, then run the assessment.
-          </p>
-        </CardBody>
-      </Card>
-    )
-  }
+  // No early return. Capacity by method, turnover triangulation and the quality
+  // factors are all derived from the product policy, the lead and the parsed
+  // documents — they stand up without an assessment. Only the composite ring,
+  // verdict, pillars and conditions need one, and those say so individually.
+  const hasAssessment = assessment !== null
 
   // ---- Capacity by method -------------------------------------------------
   // Every surrogate the app can actually compute from stored data. The lowest
@@ -98,8 +87,8 @@ export function DecisionPanel({
       basis: product && lead.monthly_income
         ? `${product.max_foir_percent}% FOIR on ${fmtAmount(Number(lead.monthly_income))} monthly income, less ${fmtAmount(Number(lead.existing_emis))} of existing EMIs${tenureYears ? `, over ${tenureYears} years` : ''}`
         : 'Needs monthly income on the applicant record and an active product policy',
-      amount: assessment.governing_capacity != null ? Number(assessment.governing_capacity) : null,
-      applicable: assessment.governing_capacity != null,
+      amount: assessment?.governing_capacity != null ? Number(assessment?.governing_capacity) : null,
+      applicable: assessment?.governing_capacity != null,
     },
     {
       key: 'LTV',
@@ -148,13 +137,13 @@ export function DecisionPanel({
     : spreadPercent <= 40 ? 'MODERATE'
     : 'WEAK'
 
-  const conditions = assessment.watch_items ?? []
-  const knockouts = assessment.knockouts ?? []
+  const conditions = assessment?.watch_items ?? []
+  const knockouts = assessment?.knockouts ?? []
 
   // Quality signals adjust how much of the assessed capacity we'd stand behind.
   const quality = buildQualityFactors(documents)
-  const afterHaircut = assessment.governing_capacity != null
-    ? Number(assessment.governing_capacity) * (1 - quality.haircutPercent / 100)
+  const afterHaircut = assessment?.governing_capacity != null
+    ? Number(assessment?.governing_capacity) * (1 - quality.haircutPercent / 100)
     : null
 
   return (
@@ -166,23 +155,35 @@ export function DecisionPanel({
           right={<RunAssessmentButton kind="lead" id={leadId} disabled={documents.length === 0} />}
         />
         <CardBody className="flex flex-wrap items-center gap-5">
-          <BandRing score={assessment.composite_score} band={assessment.composite_band} size={92} caption="Composite" />
-          <div className="min-w-0 flex-1">
-            <span className={`inline-block rounded-lg px-2.5 py-1 text-[12px] font-bold text-white ${VERDICT_SOLID[assessment.verdict]}`}>
-              {assessment.verdict}
-            </span>
-            {assessment.recommendation && (
-              <p className="mt-2.5 text-[13px] leading-relaxed text-[#47453f]">{assessment.recommendation}</p>
-            )}
-            <p className="mt-2 text-[11px] text-[#7c7a75] tnum">
-              Rules {assessment.rules_version} · {new Date(assessment.computed_at).toLocaleString('en-IN')}
-            </p>
-          </div>
+          {assessment ? (
+            <>
+              <BandRing score={assessment.composite_score} band={assessment.composite_band} size={92} caption="Composite" />
+              <div className="min-w-0 flex-1">
+                <span className={`inline-block rounded-lg px-2.5 py-1 text-[12px] font-bold text-white ${VERDICT_SOLID[assessment.verdict]}`}>
+                  {assessment.verdict}
+                </span>
+                {assessment.recommendation && (
+                  <p className="mt-2.5 text-[13px] leading-relaxed text-[#47453f]">{assessment.recommendation}</p>
+                )}
+                <p className="mt-2 text-[11px] text-[#7c7a75] tnum">
+                  Rules {assessment.rules_version} · {new Date(assessment.computed_at).toLocaleString('en-IN')}
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-[#16161a]">No verdict yet</p>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#7c7a75]">
+                The composite score, verdict and pillar breakdown appear once the assessment is run.
+                Everything below is already computed from the product policy and the documents on file.
+              </p>
+            </div>
+          )}
           <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-3">
             <StatTile
               label="Assessed"
-              value={assessment.governing_capacity != null ? fmtAmount(Number(assessment.governing_capacity)) : '—'}
-              sub={assessment.binding_constraint ?? 'No binding constraint recorded'}
+              value={assessment?.governing_capacity != null ? fmtAmount(Number(assessment?.governing_capacity)) : '—'}
+              sub={assessment?.binding_constraint ?? 'No binding constraint recorded'}
             />
             <StatTile
               label="After quality haircut"
@@ -202,8 +203,8 @@ export function DecisionPanel({
               value={fmtAmount(Number(lead.requested_amount))}
               sub={tenureYears ? `${tenureYears} year tenure` : 'Tenure not set'}
               band={
-                assessment.governing_capacity != null
-                  ? (Number(assessment.governing_capacity) >= Number(lead.requested_amount) ? 'STRONG' : 'WEAK')
+                assessment?.governing_capacity != null
+                  ? (Number(assessment?.governing_capacity) >= Number(lead.requested_amount) ? 'STRONG' : 'WEAK')
                   : null
               }
             />
@@ -355,9 +356,9 @@ export function DecisionPanel({
             <CardHead title="Terms tested" />
             <CardBody className="py-1">
               <KeyValueRow label="Requested" value={fmtAmount(Number(lead.requested_amount))} mono />
-              <KeyValueRow label="Indicative EMI" value={assessment.proposed_emi != null ? fmtAmount(Number(assessment.proposed_emi)) : '—'} mono />
-              <KeyValueRow label="DSCR at these terms" value={assessment.dscr != null ? assessment.dscr.toFixed(2) : '—'} mono />
-              <KeyValueRow label="Binding constraint" value={assessment.binding_constraint ?? '—'} />
+              <KeyValueRow label="Indicative EMI" value={assessment?.proposed_emi != null ? fmtAmount(Number(assessment?.proposed_emi)) : '—'} mono />
+              <KeyValueRow label="DSCR at these terms" value={assessment?.dscr != null ? assessment?.dscr.toFixed(2) : '—'} mono />
+              <KeyValueRow label="Binding constraint" value={assessment?.binding_constraint ?? '—'} />
             </CardBody>
           </Card>
 

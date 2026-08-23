@@ -202,13 +202,9 @@ export function OffersPanel({
             </div>
           }
         />
-        {ranked.length === 0 ? (
-          <CardBody>
-            <p className="text-[12.5px] text-[#a8a6a0]">
-              No lender products in the catalogue for this product family yet.
-            </p>
-          </CardBody>
-        ) : (
+        {/* The table keeps its columns even with an empty catalogue, so the tab
+            does not change shape and it is obvious what is missing. */}
+        {(
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px]">
               <thead>
@@ -224,6 +220,13 @@ export function OffersPanel({
                 </tr>
               </thead>
               <tbody>
+                {ranked.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-[12.5px] text-[#a8a6a0]">
+                      No lender products in the catalogue for this product family yet — add one on the Products page.
+                    </td>
+                  </tr>
+                )}
                 {ranked.map((r) => (
                   <tr key={r.id} className="border-b border-[#e7e6e2] last:border-0 hover:bg-[#efeeeb]/60">
                     <td className="px-4 py-3">

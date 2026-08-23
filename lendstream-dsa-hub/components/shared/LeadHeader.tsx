@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { Phone, StickyNote, FileText, Send } from 'lucide-react'
 import { Avatar } from '@/components/shared/Avatar'
-import { StageSelect } from '@/components/shared/StageSelect'
 import {
   STAGE_LABELS, STAGE_DESCRIPTIONS, STAGE_PILL_STYLES, VERDICT_STYLES,
   type Lead, type Assessment,
@@ -10,8 +9,15 @@ import { fmtAmount } from '@/lib/format'
 
 /**
  * Lead header: identity row + primary actions + the five-cell metric strip,
- * matching the prototype. The "Assessed capacity" cell is emphasised because
- * it is the number that decides whether the ask is fundable.
+ * matching the prototype.
+ *
+ * The header carries exactly three actions — Note, Banker summary, Submit to
+ * lender. Stage is shown as a pill beside the name and is CHANGED from the
+ * File journey rail on the Overview tab; a stage picker up here would be a
+ * second, competing control the prototype does not have.
+ *
+ * The "Assessed capacity" cell is emphasised because it is the number that
+ * decides whether the ask is fundable.
  */
 export function LeadHeader({
   lead, leadId, basePath, assessment,
@@ -63,7 +69,6 @@ export function LeadHeader({
             >
               <Send size={14} /> Submit to lender
             </Link>
-            <StageSelect leadId={lead.id} stage={lead.stage} />
           </div>
         </div>
 
