@@ -674,15 +674,15 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
         },
       ],
     },
-    capacity: impliedCapacity !== null
-      ? {
-          label: 'Implied capacity',
-          value: money(impliedCapacity),
-          basis: isSecured(lead) || cap === null
-            ? `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR. Unsecured turnover caps not applied — this is a secured facility, so collateral and cash flow govern.`
-            : `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR, capped at ${money(cap)} for this turnover band (unsecured programme).`,
-        }
-      : undefined,
+    capacity: {
+      label: 'Implied capacity',
+      value: money(impliedCapacity),
+      basis: impliedCapacity === null
+        ? 'Needs a declared turnover and a business type to apply the margin grid.'
+        : isSecured(lead) || cap === null
+          ? `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR. Unsecured turnover caps not applied — this is a secured facility, so collateral and cash flow govern.`
+          : `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR, capped at ${money(cap)} for this turnover band (unsecured programme).`,
+    },
     knockouts,
   }
 }
@@ -854,7 +854,9 @@ function bureau(lead: Lead, documents: DocumentRow[]): SectionView {
         },
       ],
     },
-    chips: adverse.length ? { title: 'Adverse records', band: 'CRITICAL', items: adverse } : undefined,
+    // Always emitted so the policy card holds its place; with no adverse
+    // records it renders the "clears policy" line rather than disappearing.
+    chips: { title: 'Adverse records', band: adverse.length ? 'CRITICAL' : 'STRONG', items: adverse },
     bandPanels: [{
       title: 'Behaviour',
       items: [
@@ -1023,14 +1025,14 @@ function financials(lead: Lead, documents: DocumentRow[]): SectionView {
     ],
     tables: [pnl, bs],
     ratios,
-    trend: hasRevenueSeries
-      ? {
-          title: 'Revenue trend',
-          sub: years.length > 1 ? `${years.length}-year gross revenue` : 'Gross revenue on file',
-          points: revenuePoints,
-          axis: years.map((y) => y.label),
-        }
-      : undefined,
+    trend: {
+      title: 'Revenue trend',
+      sub: hasRevenueSeries
+        ? (years.length > 1 ? `${years.length}-year gross revenue` : 'Gross revenue on file')
+        : 'No multi-year revenue in the parsed statement',
+      points: revenuePoints,
+      axis: years.map((y) => y.label),
+    },
   }
 }
 
@@ -1208,24 +1210,24 @@ function business(lead: Lead, documents: DocumentRow[]): SectionView {
         },
       ],
     },
-    prose: structure && rationale
-      ? [{
-          title: 'Recommended structure',
-          sub: 'Matching the facility to the cash-flow shape',
-          badge: structure,
-          text: rationale,
-        }]
-      : undefined,
-    meter: cycleDays !== null
-      ? {
-          title: 'Working capital cycle',
-          headline: { label: 'Net operating cycle', value: `${cycleDays}d` },
-          fillPercent: Math.max(0, Math.min(100, (cycleDays / 150) * 100)),
-          band: cycleBand,
-          axis: ['0d', '60d', '120d+'],
-          note: 'Longer cycles tie up working capital and argue for a revolving facility over a fixed EMI.',
-        }
-      : undefined,
+    prose: [{
+      title: 'Recommended structure',
+      sub: 'Matching the facility to the cash-flow shape',
+      badge: structure ?? null,
+      text: structure && rationale
+        ? rationale
+        : 'Not determined yet — needs the working-capital cycle and turnover to recommend a facility shape.',
+    }],
+    meter: {
+      title: 'Working capital cycle',
+      headline: { label: 'Net operating cycle', value: cycleDays !== null ? `${cycleDays}d` : null },
+      fillPercent: cycleDays !== null ? Math.max(0, Math.min(100, (cycleDays / 150) * 100)) : null,
+      band: cycleBand,
+      axis: ['0d', '60d', '120d+'],
+      note: cycleDays !== null
+        ? 'Longer cycles tie up working capital and argue for a revolving facility over a fixed EMI.'
+        : 'Needs receivable, payable and inventory days to compute the operating cycle.',
+    },
     knockouts,
   }
 }
@@ -1306,24 +1308,26 @@ function stock(lead: Lead, documents: DocumentRow[]): SectionView {
         { label: 'Drawing power available', value: money(drawingPower), emphasis: true },
       ],
     }],
-    meter: util !== null || sanctionedLimit !== null
-      ? {
-          title: 'Limit utilisation',
-          headline: sanctionedLimit !== null ? { label: 'Sanctioned limit', value: money(sanctionedLimit) } : undefined,
-          fillPercent: util,
-          band: util === null ? null : util > 90 ? 'WEAK' : util > 70 ? 'MODERATE' : 'STRONG',
-          note: util !== null ? `${util.toFixed(0)}% of sanctioned limit drawn` : undefined,
-        }
-      : undefined,
-    conduct: drawingPower !== null && sanctionedLimit !== null
-      ? {
-          title: 'Facility headroom',
-          band: drawingPower < sanctionedLimit ? 'MODERATE' : 'STRONG',
-          text: drawingPower < sanctionedLimit
+    meter: {
+      title: 'Limit utilisation',
+      headline: { label: 'Sanctioned limit', value: money(sanctionedLimit) },
+      fillPercent: util,
+      band: util === null ? null : util > 90 ? 'WEAK' : util > 70 ? 'MODERATE' : 'STRONG',
+      note: util !== null
+        ? `${util.toFixed(0)}% of sanctioned limit drawn`
+        : 'Needs a sanctioned limit and drawing power from the stock statement.',
+    },
+    conduct: {
+      title: 'Facility headroom',
+      band: drawingPower !== null && sanctionedLimit !== null
+        ? (drawingPower < sanctionedLimit ? 'MODERATE' : 'STRONG')
+        : 'MODERATE',
+      text: drawingPower !== null && sanctionedLimit !== null
+        ? (drawingPower < sanctionedLimit
             ? 'Drawing power is below the sanctioned limit — the facility is constrained by stock and receivables, not by the sanction.'
-            : 'Drawing power exceeds the sanctioned limit — there is scope to seek an enhancement.',
-        }
-      : undefined,
+            : 'Drawing power exceeds the sanctioned limit — there is scope to seek an enhancement.')
+        : 'Headroom cannot be read until both the sanctioned limit and drawing power are on file.',
+    },
   }
 }
 
@@ -1530,13 +1534,13 @@ function collateral(lead: Lead, documents: DocumentRow[]): SectionView {
         { label: 'Valued on', value: str(d.valuation_date) },
       ],
     }],
-    capacity: netCollateralAvailable !== null
-      ? {
-          label: 'Implied capacity',
-          value: money(netCollateralAvailable),
-          basis: `${ltvCapPercent}% of ${money(value)} less ${money(encumbrance ?? 0)} existing charge`,
-        }
-      : undefined,
+    capacity: {
+      label: 'Implied capacity',
+      value: money(netCollateralAvailable),
+      basis: netCollateralAvailable !== null
+        ? `${ltvCapPercent}% of ${money(value)} less ${money(encumbrance ?? 0)} existing charge`
+        : 'Needs a valued property and an LTV cap on the product to compute headroom.',
+    },
     knockouts,
   }
 }

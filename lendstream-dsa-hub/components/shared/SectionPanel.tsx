@@ -214,6 +214,9 @@ function Signals({ group, score }: { group: SectionSignalGroup; score: Band | nu
     <Card>
       <CardHead title={group.title} sub={group.sub} right={score ? <BandPill band={score} size="xs" /> : undefined} />
       <CardBody className="py-1">
+        {group.rows.length === 0 && (
+          <p className="py-3 text-[12px] text-[#a8a6a0]">No signals yet — these come from the parsed document.</p>
+        )}
         {group.rows.map((r, i) => (
           <div key={i} className="flex items-start gap-3 border-b border-[#dcdbd6]/70 py-2.5 last:border-0">
             <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${r.band ? BAND_SOLID[r.band] : 'bg-[#c9c7c1]'}`} />
@@ -395,6 +398,9 @@ function Ratios({ grid }: { grid: SectionRatioGrid }) {
     <Card>
       <CardHead title={grid.title} sub={grid.sub} />
       <CardBody>
+        {grid.items.length === 0 && (
+          <p className="text-[12px] text-[#a8a6a0]">Ratios need a parsed financial statement.</p>
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {grid.items.map((it) => (
             <div key={it.label} className="rounded-[20px] bg-[#efeeeb] p-3.5">
@@ -419,6 +425,9 @@ function BandPanel({ panel }: { panel: SectionBandPanel }) {
     <Card>
       <CardHead title={panel.title} />
       <CardBody className="space-y-1.5">
+        {panel.items.length === 0 && (
+          <p className="py-2 text-[12px] text-[#a8a6a0]">Nothing recorded for this file yet.</p>
+        )}
         {panel.items.map((it) => (
           <div key={it.label} className="flex items-center justify-between gap-3 border-b border-[#e7e6e2] py-1.5 last:border-0">
             <span className="text-[11.5px] text-[#7c7a75]">{it.label}</span>
