@@ -1,0 +1,24 @@
+## Decision: Reduced lead capture to only what's truly needed to open a file (name, phone, loan type, requested amount), and built two independent paths to fill in the rest afterwards — a manual edit form and a document-driven auto-fill — instead of a large required-fields-upfront intake form
+
+## Context: User tested the app and found it solid, but pointed out the "New lead" form forced entering income, tenure, property value, and co-applicant details all at once at creation time — not how a DSA actually captures a lead in the field. They wanted those fields fillable either by hand later or pulled automatically from uploaded documents (bank statements, ITR, valuation reports), and asked for the seeded demo data to be cleared so the app runs on real, user-entered data going forward.
+
+## Alternatives considered:
+- Keep the large intake form but make most fields optional (already technically true — the DB only required client_name/phone/loan_type/requested_amount) vs. actually removing them from the creation UI so the form matches what's required.
+- Auto-apply extracted document fields onto the lead automatically the moment parsing finishes vs. requiring an explicit "Apply to lead" click.
+- Overwriting existing lead field values with newer document extractions vs. only ever filling currently-empty fields.
+- Wiping all seeded data including the demo login accounts vs. keeping the accounts (and the product/commission catalog) while clearing only leads/documents/assessments/interactions/offers.
+
+## Reasoning:
+- The rules engine (`lib/decision/rulesEngine.ts`) already treated every non-required lead field as optional — each pillar function has an `applicable` check that gracefully excludes itself when its input data is missing (no CIBIL → BUREAU skipped, no property/wrong loan type → COLLATERAL skipped, etc.), and `computeAssessment` renormalizes pillar weights over whatever's actually applicable. This meant the UI's forced-required intake form was stricter than the logic underneath it needed — simplifying it to match was a pure UX fix, not a data-model change.
+- A single new `updateLeadDetails` server action + `EditApplicantForm` component covers "user fills it in by hand," reusing the same field set the old creation form had, just moved to the Applicant tab and available any time after creation.
+- For the document-driven path, added `applyExtractedFields` (`app/actions/applyFields.ts`) with an explicit per-document-type field map (salary slip/ITR/bank statement → monthly_income; property deed/valuation report → property_value; PAN card → pan_number) and a visible "Apply to lead" button next to each verified document — kept as an explicit action rather than automatic so the user sees exactly what changed, matching the confirm-before-write pattern already used for the AI Copilot and Run Assessment.
+- Only ever fills currently-null lead fields (never overwrites), so applying a document can't silently clobber something the user already typed in by hand — if a correction is needed, the Applicant tab edit form is always available.
+- Added a `PROPERTY_VALUATION` document type (valuer name, property address, valuation amount, valuation date) since a bank valuation report is the standard source for `property_value` on a real HL/LAP file and wasn't covered by the existing PROPERTY_DEED-family schema.
+- Cleared `leads`, `documents`, `assessments`, `assessment_pillars`, `interactions`, and `lender_offers` from the live Supabase project per the user's explicit confirmation, but deliberately kept `products`/`commission_slabs` (reference/configuration data the app needs to function, not "dummy lead data") and the demo partner/ops login accounts (so the user doesn't lose access — `scripts/seed.ts` remains available to repopulate demo data for testing if ever needed).
+
+## Trade-offs accepted:
+- The document→lead field mapping is a fixed, explicit table covering the fields that clearly map 1:1 (income, property value, PAN) — it does not attempt to reconcile conflicting values across multiple documents of the same type, or merge partial data (e.g. two salary slips with different gross figures); the first applied value wins until manually edited.
+- `fields_from_documents` (tracks which lead fields were auto-filled) is stored but only surfaced as a one-line hint on the Applicant tab, not a per-field "source" badge — enough to explain the origin without a larger provenance UI.
+- Demo login accounts (`agent1-4@rupeeboss.demo`, `ops1-2@rupeeboss.demo`) still carry their seeded display names (e.g. "Rajesh Kumar") since there's no profile-edit UI yet — cosmetic only, doesn't affect functionality.
+
+## Supersedes: Amends (does not replace) 2026-08-22-lendstream-dsa-hub-architecture.md — the schema, RLS, and rules-engine decisions there are unchanged; this only changes the lead-capture UX and clears demo data.

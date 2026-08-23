@@ -6,6 +6,27 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd '/Users/mac/nifty tradedesk' && npm run dev"],
       "port": 5173
+    },
+    {
+      "name": "trading-journal",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd '/Users/mac/AI focus/trading-journal' && npm run dev"],
+      "port": 5174,
+      "autoPort": true
+    },
+    {
+      "name": "hospital-crm",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd '/Users/mac/AI focus/hospital-crm' && npm run dev"],
+      "port": 5175,
+      "autoPort": true
+    },
+    {
+      "name": "lendstream-dsa-hub",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd '/Users/mac/AI focus/lendstream-dsa-hub' && npm run dev"],
+      "port": 5176,
+      "autoPort": true
     }
   ]
 }

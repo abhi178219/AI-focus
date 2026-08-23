@@ -1,0 +1,8 @@
+# Hospital/Clinic CRM — Hypotheses (need more data)
+
+- **H1**: Doctors will accept typing prescriptions directly in-app during the consult if the UI has fast autocomplete/favorites for their own frequently-prescribed drugs and dosages. Untested — validate with the first pilot doctor(s); if false, design shifts to post-visit staff transcription instead.
+- **H2**: "Chronic-care trend management for physicians" (diabetes/BP-flavored) resonates more with GPs the founder approaches than a generic "digitize your clinic" pitch. Untested — check reaction during first outreach conversations.
+- **H3**: Staff-entered-at-visit vitals alone (without patient self-logging working yet) is enough to create a genuine "wow, this is useful" moment for the pilot doctor. Untested — if false, patient self-logging becomes a v1 requirement rather than a v2 layer.
+- **H4**: Patients will actually self-log vitals at home if given reminders plus a visible trend/payoff. Untested — classic habit-formation risk; likely needs its own small experiment once the doctor-side loop is validated.
+- **H5**: There is a monetization model that works for a solo-builder single-clinic pilot expanding to multi-tenant (seat license vs. pharmacy/diagnostics/teleconsult adjacency revenue). Completely untested — flagged by an independent review as absent from planning entirely; worth an explicit answer before investing further in the multi-tenant phase.
+- **H6**: Clinic staff will reliably log vitals at every visit without the workflow being a burden on a busy front desk. Untested — if capture is sporadic, the vitals-trend chart (the core differentiator) becomes noise, and the product would fail quietly rather than obviously.

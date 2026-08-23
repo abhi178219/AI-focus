@@ -1,0 +1,3 @@
+# Job Scan — Rules (confirmed, apply by default)
+
+- **R1 (promoted from H1, 15 Jun 2026):** Prioritise roles with 3–9 year experience bands; treat roles requiring 8–15 yrs or 10+ yrs as below-threshold for fit scoring unless the listing explicitly allows hybrid bands. Confirmed across 3 scans — Zaggle (3-8 yrs), Tide (5-9 yrs), Applied Data Finance (5-7 yrs) all score well; Novac (8-15 yrs) and Experian Smart Money (10-12 yrs) consistently score below/excluded. This aligns with the existing "skip 10+ yr roles" constraint but extends it: even 8-15 yr ranges that technically include 6 yrs tend to be weaker fits in practice.

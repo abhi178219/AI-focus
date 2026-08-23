@@ -1,0 +1,5 @@
+# Job Scan — Hypotheses (need more data)
+- H2: Hyderabad-HQ fintechs (Zaggle, HighRadius) are more stable/realistic targets than GCC-of-US-bank roles that favour US-banking domain. [1x]
+- H3: Payments-reframed resume version would unlock the Tide payments cluster (Card Payments, Digital Payments, Product Ops Payments, etc.). Worth maintaining a dedicated payments resume variant. [seen 2x: 08 Jun, 15 Jun — Tide Card Payments role scored 75% both times without the reframe]
+- H4 (new, 15 Jun): A wealth/fixed-income-led resume variant — headlining the Liquibonds (₹0→₹40Cr) build and GripInvest bond-platform work — would score even higher (85%+) on Tide Wealth Services-type roles and similar wealth/savings PM postings. [seen 1x: Tide Wealth Services, 86% even without the reframe]
+- H5 (new, 15 Jun): AI-driven consumer-lending platforms with India hiring (e.g., Applied Data Finance) are a strong-fit company archetype distinct from Tide/HighRadius/Zaggle — domain overlap is near-direct (NBFC lending → AI lending). Worth a recurring targeted search ("AI lending platform" + Hyderabad + product manager). [seen 1x, scored 88% — highest so far]

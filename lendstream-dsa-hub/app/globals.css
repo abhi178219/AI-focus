@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/* Tokens sampled from the reference prototype's computed styles (2026-08-22).
+   Do not "tidy" these into approximations — they are exact values. */
+:root {
+  --canvas: #eae9e6;       /* page background */
+  --surface: #f7f6f4;      /* cards — NOT white */
+  --surface-2: #efeeeb;    /* inset panels, chips, secondary buttons */
+  --sunken: #e3e2de;       /* progress track, avatar background */
+  --line: #dcdbd6;         /* hairline borders */
+
+  --ink: #16161a;          /* primary text */
+  --ink-soft: #5f5d58;     /* secondary text */
+  --ink-faint: #7c7a75;    /* tertiary / labels */
+  --ink-mid: #47453f;      /* chip text */
+
+  --brand-600: #2440e8;    /* accent — notification dot, links */
+  --brand-50: #eef1fe;
+
+  /* Five distinct assessment bands. The prototype gives each its own hue —
+     STRONG and GOOD are NOT the same green, WEAK and MODERATE are NOT the same amber. */
+  --strong-bg: #e8f3ee;  --strong-fg: #16694a;  --strong-solid: #1a7f5a;
+  --good-bg:   #e8f0f7;  --good-fg:   #1a5d95;  --good-solid:   #1f6fb2;
+  --mod-bg:    #f7f0e2;  --mod-fg:    #85580d;  --mod-solid:    #a06a10;
+  --weak-bg:   #f8ece5;  --weak-fg:   #99461a;  --weak-solid:   #b8551f;
+  --crit-bg:   #fbebeb;  --crit-fg:   #b42318;  --crit-solid:   #b3323f;
+
+  --background: var(--canvas);
+  --foreground: var(--ink);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans), 'Onest', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+
+/* Card elevation — the prototype's `elev` class. */
+.elev { box-shadow: 0 1px 2px rgba(22, 22, 26, 0.04), 0 8px 24px -12px rgba(22, 22, 26, 0.10); }
+
+/* Tabular numerals for every figure in a financial table/metric. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbc9c3; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #a8a6a0; }
+
+@media print {
+  [data-app-shell-chrome] { display: none !important; }
+}
