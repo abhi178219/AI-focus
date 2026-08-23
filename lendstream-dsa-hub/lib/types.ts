@@ -62,6 +62,33 @@ export interface Lead {
   business_constitution: 'PROPRIETORSHIP' | 'PARTNERSHIP' | 'PRIVATE_LIMITED' | 'LLP' | 'PUBLIC_LIMITED' | null
   business_vintage_years: number | null
   industry: string | null
+  // Applicant detail — captured by the user when a document didn't yield it.
+  father_name: string | null
+  qualification: string | null
+  /** Last four digits only. The full Aadhaar number is never stored. */
+  aadhaar_last4: string | null
+  residence_address: string | null
+  permanent_same_as_current: boolean
+  permanent_address: string | null
+  residence_type: 'OWNED' | 'RENTED' | 'COMPANY_PROVIDED' | 'PARENTAL' | 'LEASED' | null
+  years_at_residence: number | null
+  // Entity registration
+  incorporation_date: string | null
+  company_pan: string | null
+  gstin: string | null
+  udyam_number: string | null
+  cin: string | null
+  // Role & premises
+  designation: string | null
+  din: string | null
+  office_address: string | null
+  business_premises_ownership: 'OWNED' | 'RENTED' | 'LEASED' | null
+  business_years_at_premises: number | null
+  // Co-applicant
+  co_applicant_name: string | null
+  co_applicant_relationship: string | null
+  co_applicant_dob: string | null
+  co_applicant_pan: string | null
   created_at: string
   updated_at: string
 }

@@ -9,7 +9,7 @@ import { DocumentsTable } from '@/components/shared/DocumentsTable'
 import { ActivityPanel, type ActivityRow } from '@/components/shared/ActivityPanel'
 import { DecisionPanel } from '@/components/shared/DecisionPanel'
 import { OffersPanel } from '@/components/shared/OffersPanel'
-import { EditApplicantForm } from '@/components/shared/EditApplicantForm'
+import { ApplicantPanel } from '@/components/shared/ApplicantPanel'
 import { buildSections, buildSignals, type SectionCode } from '@/lib/decision/sections'
 import {
   type Lead, type DocumentRow, type Assessment, type AssessmentPillar,
@@ -137,16 +137,7 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
         />
       )}
 
-      {activeTab === 'applicant' && (
-        <div className="space-y-3">
-          {lead.fields_from_documents?.length > 0 && (
-            <p className="text-[11px] text-[#7c7a75]">
-              Auto-filled from documents: {lead.fields_from_documents.join(', ')} — edit below to correct anything.
-            </p>
-          )}
-          <EditApplicantForm leadId={leadId} lead={lead} />
-        </div>
-      )}
+      {activeTab === 'applicant' && <ApplicantPanel leadId={leadId} lead={lead} />}
 
       {SECTION_TABS[activeTab] && (
         <SectionPanel

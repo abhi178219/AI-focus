@@ -128,3 +128,65 @@ export async function addInteraction(leadId: string, formData: FormData) {
   revalidatePath(`/partner/leads/${leadId}`)
   return {}
 }
+
+/**
+ * Section-scoped update for the Applicant tab.
+ *
+ * Only writes keys the submitted card actually contained, so editing one card
+ * can never blank a field that lives on another. Checkboxes are handled by an
+ * explicit `__bool:<name>` marker, because an unchecked box submits nothing.
+ */
+const TEXT_FIELDS = new Set([
+  'email', 'pan_number', 'gender', 'marital_status', 'residence_city', 'employment_type',
+  'business_name', 'business_constitution', 'industry', 'bank_assigned', 'property_city',
+  'property_stage', 'father_name', 'qualification', 'aadhaar_last4', 'residence_address',
+  'permanent_address', 'residence_type', 'company_pan', 'gstin', 'udyam_number', 'cin',
+  'designation', 'din', 'office_address', 'business_premises_ownership',
+  'co_applicant_name', 'co_applicant_relationship',
+])
+const DATE_FIELDS = new Set(['date_of_birth', 'incorporation_date', 'co_applicant_dob'])
+const NUMBER_FIELDS = new Set([
+  'monthly_income', 'existing_emis', 'tenure_years', 'cibil_score', 'property_value',
+  'co_applicant_income', 'business_vintage_years', 'years_at_residence',
+  'business_years_at_premises', 'business_employee_count',
+  'business_credit_sales_percent', 'business_customer_concentration_percent',
+])
+const BOOL_FIELDS = new Set(['has_co_applicant', 'permanent_same_as_current'])
+
+export async function updateLeadSection(leadId: string, formData: FormData) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const payload: Record<string, unknown> = {}
+
+  for (const key of new Set(formData.keys())) {
+    if (TEXT_FIELDS.has(key)) {
+      const v = String(formData.get(key) ?? '').trim()
+      payload[key] = v ? (key === 'pan_number' || key === 'company_pan' || key === 'co_applicant_pan' ? v.toUpperCase() : v) : null
+    } else if (DATE_FIELDS.has(key)) {
+      payload[key] = String(formData.get(key) ?? '').trim() || null
+    } else if (NUMBER_FIELDS.has(key)) {
+      payload[key] = numOrNull(formData.get(key))
+    } else if (BOOL_FIELDS.has(key)) {
+      payload[key] = formData.get(key) === 'on'
+    }
+  }
+  // A checkbox that was rendered but left unchecked submits no key at all, so
+  // any bool field belonging to this card is set explicitly from the marker.
+  for (const marker of formData.getAll('__bool')) {
+    const name = String(marker)
+    if (BOOL_FIELDS.has(name) && !(name in payload)) payload[name] = false
+  }
+
+  if (Object.keys(payload).length === 0) return { error: 'Nothing to save.' }
+  payload.updated_at = new Date().toISOString()
+
+  // RLS filters rows rather than erroring, so check the affected row count.
+  const { data, error } = await supabase.from('leads').update(payload).eq('id', leadId).select('id')
+  if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: "Could not save — you don't have access to this lead." }
+
+  revalidatePath(`/partner/leads/${leadId}`)
+  return {}
+}
