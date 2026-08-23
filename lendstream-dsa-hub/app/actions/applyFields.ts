@@ -178,6 +178,27 @@ export async function applyExtractedFields(documentId: string, selectedFields?: 
   if (error) return { error: error.message }
   if (!updated || updated.length === 0) return { error: "Could not apply — you don't have access to this lead." }
 
+  // Learning signal. Every applied field is a labelled example of how the
+  // extractor performed on this document type:
+  //   overwrite  -> the lead held something different; the model may have been wrong
+  //   manual_fill-> the field was empty; the model supplied it
+  // Failures here must never fail the apply, so it is fire-and-forget.
+  try {
+    const corrections = appliedFields.map((field) => ({
+      document_id: doc.id,
+      document_type: doc.type,
+      field,
+      extracted_value: display((proposed as Record<string, unknown>)[field]) || null,
+      corrected_value: null,
+      kind: display(lead[field as keyof Lead]) ? 'overwrite' : 'manual_fill',
+      model: doc.extraction_model,
+      corrected_by: user.id,
+    }))
+    if (corrections.length) await supabase.from('extraction_corrections').insert(corrections)
+  } catch {
+    // Non-fatal: the correction log is a learning aid, not part of the write.
+  }
+
   revalidatePath(`/partner/leads/${lead.id}`)
   return { ok: true as const, appliedFields }
 }

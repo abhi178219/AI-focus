@@ -180,12 +180,47 @@ export async function updateLeadSection(leadId: string, formData: FormData) {
   }
 
   if (Object.keys(payload).length === 0) return { error: 'Nothing to save.' }
+
+  // If the user is hand-editing a field a document previously supplied, that is
+  // the strongest signal the extractor got it wrong. Capture it before the write
+  // so the old value is still available to log against.
+  const { data: before } = await supabase
+    .from('leads').select('*').eq('id', leadId).single()
+  const fromDocs: string[] = (before?.fields_from_documents ?? []) as string[]
+  const corrected = Object.keys(payload).filter(
+    (k) => fromDocs.includes(k) && String(before?.[k] ?? '') !== String(payload[k] ?? ''),
+  )
+
   payload.updated_at = new Date().toISOString()
 
   // RLS filters rows rather than erroring, so check the affected row count.
   const { data, error } = await supabase.from('leads').update(payload).eq('id', leadId).select('id')
   if (error) return { error: error.message }
   if (!data || data.length === 0) return { error: "Could not save — you don't have access to this lead." }
+
+  if (corrected.length) {
+    try {
+      const { data: srcDocs } = await supabase
+        .from('documents').select('id, type, extraction_model')
+        .eq('lead_id', leadId).eq('status', 'verified')
+        .order('uploaded_at', { ascending: false }).limit(1)
+      const src = srcDocs?.[0]
+      if (src) {
+        await supabase.from('extraction_corrections').insert(corrected.map((field) => ({
+          document_id: src.id,
+          document_type: src.type,
+          field,
+          extracted_value: String(before?.[field] ?? '') || null,
+          corrected_value: String(payload[field] ?? '') || null,
+          kind: 'overwrite',
+          model: src.extraction_model,
+          corrected_by: user.id,
+        })))
+      }
+    } catch {
+      // Non-fatal — the learning log must never block a save.
+    }
+  }
 
   revalidatePath(`/partner/leads/${leadId}`)
   return {}
