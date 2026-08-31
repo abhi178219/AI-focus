@@ -5,6 +5,9 @@ import { revalidatePath } from 'next/cache'
 import { randomUUID } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 import type { DocumentType } from '@/lib/types'
+import { DOC_TYPE_LABEL } from '@/lib/documentCategories'
+
+const VALID_DOCUMENT_TYPES = new Set(Object.keys(DOC_TYPE_LABEL))
 
 export async function uploadDocument(leadId: string, formData: FormData) {
   const supabase = await createClient()
@@ -12,7 +15,14 @@ export async function uploadDocument(leadId: string, formData: FormData) {
   if (!user) redirect('/login')
 
   const file = formData.get('file') as File | null
-  const type = String(formData.get('type') ?? 'OTHER') as DocumentType
+  const rawType = String(formData.get('type') ?? '').trim()
+  // The type selector must never silently fall back to a guessed value — a
+  // bank statement uploaded with no real type chosen must not be filed (and
+  // then extracted) as a PAN card. Require an explicit, valid choice.
+  if (!rawType || !VALID_DOCUMENT_TYPES.has(rawType)) {
+    return { error: 'Choose what kind of document this is before uploading.' }
+  }
+  const type = rawType as DocumentType
   if (!file || file.size === 0) return { error: 'Choose a file to upload.' }
 
   const documentId = randomUUID()

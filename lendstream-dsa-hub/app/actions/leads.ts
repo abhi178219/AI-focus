@@ -17,29 +17,104 @@ function numOrNull(value: FormDataEntryValue | null) {
 // Applicant tab, either by hand or applied from parsed documents (see
 // applyExtractedFields in app/actions/pipeline.ts). Forcing all of that
 // upfront doesn't match how a DSA actually captures a lead.
+//
+// Creates a fresh Applicant (the person) and one Application (a `leads` row)
+// under it together, every time — "New lead" never auto-matches an existing
+// Applicant by phone number, so two people can't get silently merged and a
+// mistyped digit can't silently misfile someone. A second Application for a
+// returning customer is only ever added explicitly, from that Applicant's own
+// record — see createApplication below. See
+// /decisions/2026-08-31-lendstream-dsa-hub-applicant-application-relation.md.
 export async function createLead(formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const payload = {
+  const applicantPayload = {
     agent_id: user.id,
     client_name: String(formData.get('client_name') ?? '').trim(),
     phone: String(formData.get('phone') ?? '').trim(),
     email: String(formData.get('email') ?? '').trim() || null,
-    pan_number: String(formData.get('pan_number') ?? '').trim().toUpperCase() || null,
-    loan_type: String(formData.get('loan_type') ?? 'PL') as LoanType,
-    requested_amount: numOrNull(formData.get('requested_amount')) ?? 0,
+    residence_address: String(formData.get('residence_address') ?? '').trim() || null,
+  }
+  const loan_type = String(formData.get('loan_type') ?? 'PL') as LoanType
+  const requested_amount = numOrNull(formData.get('requested_amount')) ?? 0
+
+  if (!applicantPayload.client_name || !/^\d{10}$/.test(applicantPayload.phone) || !(requested_amount > 0)) {
+    return { error: 'Enter a customer name, a valid 10-digit mobile number, and an amount greater than zero.' }
   }
 
-  if (!payload.client_name || !payload.phone || !(payload.requested_amount > 0)) {
-    return { error: 'Client name, phone, and a requested amount greater than zero are required.' }
+  const { data: applicant, error: applicantError } = await supabase
+    .from('applicants').insert(applicantPayload).select('id').single()
+  if (applicantError) return { error: applicantError.message }
+
+  const { data, error } = await supabase.from('leads').insert({
+    agent_id: user.id,
+    applicant_id: applicant.id,
+    client_name: applicantPayload.client_name,
+    phone: applicantPayload.phone,
+    email: applicantPayload.email,
+    residence_address: applicantPayload.residence_address,
+    loan_type,
+    requested_amount,
+  }).select('id').single()
+  if (error) {
+    // Leave no orphan Applicant behind if the Application couldn't be
+    // created. RLS filters rather than erroring, so check the row count —
+    // an unnoticed 0-row delete here would silently leave a phantom
+    // Applicant with zero Applications on every such failure.
+    const { data: deleted } = await supabase.from('applicants').delete().eq('id', applicant.id).select('id')
+    if (!deleted || deleted.length === 0) {
+      console.error(`[createLead] failed to roll back orphan applicant ${applicant.id} after Application insert error:`, error.message)
+    }
+    return { error: error.message }
   }
 
-  const { data, error } = await supabase.from('leads').insert(payload).select('id').single()
+  revalidatePath('/partner/leads')
+  revalidatePath('/partner')
+  if (formData.get('submit_mode') === 'add_another') return { success: applicantPayload.client_name }
+  redirect(`/partner/leads/${data.id}?tab=applicant`)
+}
+
+// Adds a second (or further) Application under an Applicant who already
+// exists — reached only from that Applicant's own record, never inferred.
+// Only Product + Amount are asked for; identity fields are read from the
+// Applicant record itself, not re-entered.
+//
+// The new lead's agent_id is always the Applicant's OWN agent_id, never the
+// caller's — an ops_admin can see every partner's Applicant on this
+// dashboard, but must never be able to graft a lead onto a partner's book.
+// leads_insert_own only allows agent_id = auth.uid(), so an ops caller (or
+// anyone acting on an Applicant they don't own) correctly gets an RLS error
+// here rather than silently authoring a lead the actual owner can't see.
+export async function createApplication(applicantId: string, formData: FormData) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: applicant, error: applicantError } = await supabase
+    .from('applicants').select('id, agent_id, client_name, phone, email, residence_address')
+    .eq('id', applicantId).single()
+  if (applicantError || !applicant) return { error: "Could not find that applicant — you may not have access to it." }
+
+  const loan_type = String(formData.get('loan_type') ?? 'PL') as LoanType
+  const requested_amount = numOrNull(formData.get('requested_amount')) ?? 0
+  if (!(requested_amount > 0)) return { error: 'Enter an amount greater than zero.' }
+
+  const { data, error } = await supabase.from('leads').insert({
+    agent_id: applicant.agent_id,
+    applicant_id: applicant.id,
+    client_name: applicant.client_name,
+    phone: applicant.phone,
+    email: applicant.email,
+    residence_address: applicant.residence_address,
+    loan_type,
+    requested_amount,
+  }).select('id').single()
   if (error) return { error: error.message }
 
   revalidatePath('/partner/leads')
+  revalidatePath('/partner')
   redirect(`/partner/leads/${data.id}?tab=applicant`)
 }
 

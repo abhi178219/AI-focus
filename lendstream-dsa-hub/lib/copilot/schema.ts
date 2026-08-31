@@ -15,7 +15,7 @@ export const moveLeadStageSchema = z.object({
 export const createLeadSchema = z.object({
   client_name: z.string().min(1).max(120),
   phone: z.string().min(6).max(20),
-  loan_type: z.enum(['PL', 'HL', 'LAP', 'BOTH']),
+  loan_type: z.enum(['PL', 'HL', 'LAP', 'BOTH', 'BL', 'WC']),
   requested_amount: z.number().positive(),
   monthly_income: z.number().positive().nullable(),
 })

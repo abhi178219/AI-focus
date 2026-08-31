@@ -9,12 +9,12 @@ import { PassRateByRm, type RmPassRate } from '@/components/shared/PassRateByRm'
 import { StatLine } from '@/components/shared/StatTile'
 import {
   STAGE_LABELS, VERDICT_STYLES, BAND_STYLES, BAND_LABEL, FUNNEL_STAGES,
-  type Lead, type Band, type Verdict,
+  type Lead, type Applicant, type Band, type Verdict,
 } from '@/lib/types'
 import { fmtAmount } from '@/lib/format'
 
 const LOAN_TYPE_LABEL: Record<string, string> = {
-  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL',
+  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
 }
 
 /** Radar axis labels, in the prototype's order. */
@@ -32,11 +32,25 @@ function bandOf(score: number): Band {
 
 export default async function PartnerDashboard() {
   const supabase = await createClient()
-  const [{ data: { user } }, { data: leads }] = await Promise.all([
+  const [{ data: { user } }, { data: leads }, { data: applicantRows }] = await Promise.all([
     supabase.auth.getUser(),
     supabase.from('leads').select('*').returns<Lead[]>(),
+    supabase.from('applicants').select('*').order('updated_at', { ascending: false }).returns<Applicant[]>(),
   ])
   const rows = leads ?? []
+  const applicants = applicantRows ?? []
+
+  // Applications (leads) grouped under their Applicant — HubSpot's
+  // Contact→Deals relation. "New lead" always creates one of each together;
+  // a second Application is only ever added explicitly from the Applicant's
+  // own row here, never inferred from a matching phone number. See
+  // /decisions/2026-08-31-lendstream-dsa-hub-applicant-application-relation.md.
+  const applicationsByApplicant = new Map<string, Lead[]>()
+  for (const l of rows) {
+    const list = applicationsByApplicant.get(l.applicant_id) ?? []
+    list.push(l)
+    applicationsByApplicant.set(l.applicant_id, list)
+  }
 
   const disbursedValue = rows.reduce((sum, l) => sum + Number(l.disbursed_amount ?? 0), 0)
   const activePipeline = rows.filter((l) => !['DISBURSED', 'DROPPED'].includes(l.stage))
@@ -98,7 +112,10 @@ export default async function PartnerDashboard() {
     if (a.verdict === 'PASS') e.pass += 1
     byAgent.set(l.agent_id, e)
   }
-  const agentIds = [...byAgent.keys()]
+  // Union with every Applicant's owner too — an ops_admin sees every
+  // partner's Applicants on the card below, and needs to see whose book each
+  // one belongs to (two partners can otherwise render as identical rows).
+  const agentIds = [...new Set([...byAgent.keys(), ...applicants.map((a) => a.agent_id)])]
   const { data: agentProfiles } = agentIds.length
     ? await supabase.from('profiles').select('id, full_name').in('id', agentIds)
     : { data: [] as { id: string; full_name: string | null }[] }
@@ -330,6 +347,83 @@ export default async function PartnerDashboard() {
               <p className="mt-2 text-[11px] text-[#a8a6a0]">No disbursals in the last 12 months.</p>
             )}
           </CardBody>
+        </Card>
+      </div>
+
+      <div className="mt-4">
+        <Card>
+          <CardHead
+            title="Applicants"
+            sub="Each customer, with every loan application they've asked for underneath"
+          />
+          <div className="max-h-[520px] divide-y divide-[#e7e6e2] overflow-y-auto">
+            {applicants.length === 0 && (
+              <p className="px-6 py-8 text-center text-[13px] text-[#a8a6a0]">No applicants yet.</p>
+            )}
+            {applicants.map((applicant) => {
+              const apps = [...(applicationsByApplicant.get(applicant.id) ?? [])]
+                .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+              // A regular partner only ever sees their own Applicants (RLS),
+              // so this badge would always just say "you" — noise. It only
+              // earns its place for ops, who sees every partner's book here
+              // and needs to tell two identically-named rows apart.
+              const isOwnApplicant = applicant.agent_id === user?.id
+              return (
+                <div key={applicant.id} className="px-6 py-4">
+                  <div className="flex items-center gap-4">
+                    <Avatar name={applicant.client_name} size={38} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-[#16161a]">{applicant.client_name}</p>
+                      <p className="truncate text-[11px] text-[#7c7a75]">{applicant.phone}{applicant.email ? ` · ${applicant.email}` : ''}</p>
+                    </div>
+                    {!isOwnApplicant && (
+                      <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-medium text-[#7c7a75]">
+                        {nameByAgent.get(applicant.agent_id) ?? `${applicant.agent_id.slice(0, 8)}…`}'s
+                      </span>
+                    )}
+                    <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-semibold text-[#5f5d58] tnum">
+                      {apps.length} application{apps.length === 1 ? '' : 's'}
+                    </span>
+                    {/* Only the Applicant's own agent can actually add an Application here —
+                        leads_insert_own requires agent_id = auth.uid(), so an ops viewer
+                        hitting this on a partner's Applicant would only reach a dead-end
+                        RLS error after filling the whole form. Hide it instead. */}
+                    {isOwnApplicant && (
+                      <Link
+                        href={`/partner/applicants/${applicant.id}/application/new`}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#efeeeb] px-3 py-1.5 text-[11px] font-semibold text-[#47453f] hover:bg-[#e3e2de]"
+                      >
+                        <Plus size={11} strokeWidth={3} /> New application
+                      </Link>
+                    )}
+                  </div>
+
+                  <div className="ml-[54px] mt-2.5 space-y-1.5">
+                    {apps.map((l) => {
+                      const a = latestByLead.get(l.id)
+                      return (
+                        <Link
+                          key={l.id}
+                          href={`/partner/leads/${l.id}`}
+                          className="flex items-center gap-3 rounded-[14px] bg-[#efeeeb] px-3.5 py-2.5 hover:bg-[#e3e2de]"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#16161a]">
+                            {LOAN_TYPE_LABEL[l.loan_type] ?? l.loan_type}
+                          </span>
+                          <span className="shrink-0 rounded-full bg-[#f7f6f4] px-2 py-0.5 text-[10.5px] font-medium text-[#5f5d58]">
+                            {STAGE_LABELS[l.stage]}
+                          </span>
+                          {a && <Badge className={VERDICT_STYLES[a.verdict]}>{a.verdict}</Badge>}
+                          <span className="shrink-0 text-[12px] font-bold text-[#16161a] tnum">{fmtAmount(Number(l.requested_amount))}</span>
+                        </Link>
+                      )
+                    })}
+                    {apps.length === 0 && <p className="text-[11px] text-[#a8a6a0]">No applications on file.</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </Card>
       </div>
     </div>

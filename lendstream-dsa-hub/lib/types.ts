@@ -9,7 +9,7 @@ export const LEAD_STAGES: LeadStage[] = [
   'LOGGED_IN', 'SANCTIONED', 'DISBURSED', 'DROPPED',
 ]
 
-export type LoanType = 'PL' | 'HL' | 'LAP' | 'BOTH'
+export type LoanType = 'PL' | 'HL' | 'LAP' | 'BOTH' | 'BL' | 'WC'
 export type ProductCategory = 'PL' | 'HL' | 'LAP'
 
 export type DocumentType =
@@ -23,9 +23,21 @@ export type Band = 'STRONG' | 'GOOD' | 'MODERATE' | 'WEAK' | 'CRITICAL'
 export type Verdict = 'PASS' | 'REFER' | 'DECLINE'
 export type PillarCode = 'BANKING' | 'BUREAU' | 'COLLATERAL' | 'GST'
 
+export interface Applicant {
+  id: string
+  agent_id: string
+  client_name: string
+  phone: string
+  email: string | null
+  residence_address: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Lead {
   id: string
   agent_id: string
+  applicant_id: string
   client_name: string
   phone: string
   email: string | null

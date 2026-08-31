@@ -13,3 +13,4 @@ tsconfig.tsbuildinfo
 # misc
 .DS_Store
 *.log
+.keepalive/

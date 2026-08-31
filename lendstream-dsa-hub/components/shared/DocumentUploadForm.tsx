@@ -22,7 +22,11 @@ export function DocumentUploadForm({ leadId }: { leadId: string }) {
   const [fileName, setFileName] = useState<string | null>(null)
   const [fileSize, setFileSize] = useState<number | null>(null)
   const [source, setSource] = useState<'UPLOAD' | 'SCAN'>('UPLOAD')
-  const [type, setType] = useState<DocumentType>('PAN_CARD')
+  // No default document type. Silently defaulting to one (this used to default
+  // to PAN_CARD) meant a bank statement dropped without the dropdown being
+  // touched was uploaded — and then extracted — as a PAN card. Forcing an
+  // explicit choice is the fix; see the "Untitled" placeholder option below.
+  const [type, setType] = useState<DocumentType | ''>('')
   const [dragActive, setDragActive] = useState(false)
 
   async function action(_prev: State, formData: FormData): Promise<State> {
@@ -38,6 +42,7 @@ export function DocumentUploadForm({ leadId }: { leadId: string }) {
   function clearFile() {
     setFileName(null)
     setFileSize(null)
+    setSource('UPLOAD')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -66,9 +71,13 @@ export function DocumentUploadForm({ leadId }: { leadId: string }) {
             form="document-upload-form"
             value={type}
             onChange={(e) => setType(e.target.value as DocumentType)}
+            required
             aria-label="Document type"
-            className="h-9 max-w-[220px] rounded-full bg-[#efeeeb] px-4 text-[12px] font-medium text-[#47453f]"
+            className={`h-9 max-w-[220px] rounded-full px-4 text-[12px] font-medium ${
+              type ? 'bg-[#efeeeb] text-[#47453f]' : 'bg-[#fbebeb] text-[#b42318]'
+            }`}
           >
+            <option value="" disabled>Choose document type…</option>
             {DOC_CATEGORIES.map((cat) => (
               <optgroup key={cat.key} label={cat.label}>
                 {cat.types.map((t) => (
@@ -116,14 +125,21 @@ export function DocumentUploadForm({ leadId }: { leadId: string }) {
               <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-2 rounded-full bg-[#f7f6f4] py-1.5 pl-4 pr-1.5">
                 <span className="text-[12px] font-medium text-[#16161a]">{fileName}</span>
                 <span className="text-[11px] text-[#7c7a75] tnum">
-                  {fileSize != null ? formatSize(fileSize) : ''} · {source === 'SCAN' ? 'scanned' : 'ready to upload'}
+                  {fileSize != null ? formatSize(fileSize) : ''} · {source === 'SCAN' ? 'scanned' : 'selected'}
+                </span>
+                {/* Names the type this file will actually be filed and extracted as,
+                    so a mismatch between the file and the dropdown is obvious
+                    before Upload is pressed, not after extraction runs. */}
+                <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${type ? 'bg-[#eef1fe] text-[#2440e8]' : 'bg-[#fbebeb] text-[#b42318]'}`}>
+                  {type ? DOC_TYPE_LABEL[type] : 'Choose a document type above'}
                 </span>
                 <button type="button" onClick={clearFile} aria-label="Remove selected file" className="grid h-6 w-6 place-items-center rounded-full text-[#7c7a75] hover:bg-[#e3e2de]">
                   <X size={12} />
                 </button>
                 <button
                   type="submit"
-                  disabled={pending}
+                  disabled={pending || !type}
+                  title={type ? undefined : 'Choose a document type first'}
                   className="h-8 rounded-full bg-[#1a1917] px-3.5 text-[12px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
                 >
                   {pending ? 'Uploading…' : 'Upload'}

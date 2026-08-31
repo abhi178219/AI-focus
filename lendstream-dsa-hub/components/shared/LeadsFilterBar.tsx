@@ -7,6 +7,8 @@ import { STAGE_LABELS, LEAD_STAGES } from '@/lib/types'
 const PRODUCT_OPTIONS = [
   { value: '', label: 'All products' },
   { value: 'PL', label: 'Personal Loan' },
+  { value: 'BL', label: 'Business Loan' },
+  { value: 'WC', label: 'Working Capital' },
   { value: 'HL', label: 'Home Loan' },
   { value: 'LAP', label: 'Loan Against Property' },
   { value: 'BOTH', label: 'PL + HL' },

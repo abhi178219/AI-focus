@@ -8,7 +8,7 @@ import { Badge } from '@/components/shared/Badge'
 import { Avatar } from '@/components/shared/Avatar'
 
 export const PRODUCT_LABEL: Record<string, string> = {
-  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL',
+  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
 }
 
 export interface LeadRowExtras {
