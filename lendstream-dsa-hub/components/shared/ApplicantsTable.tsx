@@ -1,12 +1,8 @@
 import Link from 'next/link'
 import { Building2, MapPin, Mail, Phone, Plus } from 'lucide-react'
-import { STAGE_LABELS, VERDICT_STYLES, type Applicant, type Lead } from '@/lib/types'
+import { LOAN_TYPE_LABEL, STAGE_LABELS, VERDICT_STYLES, type Applicant, type Lead } from '@/lib/types'
 import { fmtAmount } from '@/lib/format'
 import { Avatar } from '@/components/shared/Avatar'
-
-const LOAN_TYPE_LABEL: Record<string, string> = {
-  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
-}
 
 const MAX_CHIPS = 3
 

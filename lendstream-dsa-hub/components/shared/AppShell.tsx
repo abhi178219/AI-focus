@@ -3,17 +3,22 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { Bell, ChartColumn, ChevronDown, LayoutGrid, LifeBuoy, LogOut, Search, Sparkles, Users, Wallet } from 'lucide-react'
+import {
+  Bell, ChartColumn, ChevronDown, LayoutGrid, LifeBuoy, ListChecks, LogOut,
+  Search, ShieldCheck, Sparkles, Users, Wallet,
+} from 'lucide-react'
 import { CopilotLauncher } from '@/components/copilot/CopilotLauncher'
 import { logout } from '@/app/actions/auth'
 
-/** Single portal — the nav in the prototype, in its order. */
+/** Single portal — the prototype's five, plus Tasks/Policy added after. */
 const NAV_ITEMS = [
   { href: '/partner', label: 'Dashboard', icon: LayoutGrid },
   { href: '/partner/leads', label: 'Leads', icon: Users },
   { href: '/partner/calculators', label: 'Calculators', icon: ChartColumn },
   { href: '/partner/analytics', label: 'Analytics', icon: Wallet },
   { href: '/partner/products', label: 'Products', icon: LifeBuoy },
+  { href: '/partner/tasks', label: 'Tasks', icon: ListChecks },
+  { href: '/partner/policy', label: 'Policy', icon: ShieldCheck },
 ] as const
 
 export function AppShell({

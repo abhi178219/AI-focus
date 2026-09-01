@@ -8,14 +8,10 @@ import { PillarRadar, type RadarAxis } from '@/components/shared/PillarRadar'
 import { PassRateByRm, type RmPassRate } from '@/components/shared/PassRateByRm'
 import { StatLine } from '@/components/shared/StatTile'
 import {
-  STAGE_LABELS, VERDICT_STYLES, BAND_STYLES, BAND_LABEL, FUNNEL_STAGES,
+  LOAN_TYPE_LABEL, STAGE_LABELS, VERDICT_STYLES, BAND_STYLES, BAND_LABEL, FUNNEL_STAGES,
   type Lead, type Applicant, type Band, type Verdict,
 } from '@/lib/types'
 import { fmtAmount } from '@/lib/format'
-
-const LOAN_TYPE_LABEL: Record<string, string> = {
-  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
-}
 
 /** Radar axis labels, in the prototype's order. */
 const PILLAR_LABEL: Record<string, string> = {

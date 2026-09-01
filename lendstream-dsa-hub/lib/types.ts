@@ -12,6 +12,11 @@ export const LEAD_STAGES: LeadStage[] = [
 export type LoanType = 'PL' | 'HL' | 'LAP' | 'BOTH' | 'BL' | 'WC'
 export type ProductCategory = 'PL' | 'HL' | 'LAP'
 
+/** Long-form product names, used wherever a raw loan_type code would be opaque. */
+export const LOAN_TYPE_LABEL: Record<string, string> = {
+  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
+}
+
 export type DocumentType =
   | 'PAN_CARD' | 'AADHAAR' | 'SALARY_SLIP' | 'BANK_STATEMENT' | 'PROPERTY_DEED'
   | 'BUILDER_AGREEMENT' | 'OCCUPANCY_CERTIFICATE' | 'PROPERTY_VALUATION' | 'ITR' | 'GST_RETURNS'
@@ -227,6 +232,176 @@ export interface SectionSummary {
   summary: string
   model: string | null
   generated_at: string
+}
+
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH'
+export type TaskStatus = 'PENDING' | 'COMPLETED'
+
+/** A follow-up or to-do. Either or both of applicant_id/lead_id may be set —
+ *  a task can be about a person generally, about one specific application,
+ *  or (rarely) neither. */
+export interface Task {
+  id: string
+  agent_id: string
+  applicant_id: string | null
+  lead_id: string | null
+  title: string
+  notes: string | null
+  due_date: string | null
+  priority: TaskPriority
+  status: TaskStatus
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Credit policy
+// ---------------------------------------------------------------------------
+
+/** The five real loan products. Excludes `BOTH`, which is a lead's request
+ *  shape rather than a product a policy can be written against. */
+export type PolicyProduct = 'PL' | 'HL' | 'LAP' | 'BL' | 'WC'
+export type PolicyStatus = 'DRAFT' | 'ACTIVE' | 'INACTIVE'
+
+export const POLICY_PRODUCTS: PolicyProduct[] = ['PL', 'HL', 'LAP', 'BL', 'WC']
+
+/** Products for which the collateral parameter group is meaningful. */
+export const COLLATERAL_PRODUCTS: PolicyProduct[] = ['HL', 'LAP', 'WC']
+
+export type PolicyEmploymentType = 'SALARIED' | 'SELF_EMPLOYED'
+export type PolicyResidency = 'RESIDENT' | 'NRI'
+export type PolicyThinFileTreatment = 'REFER' | 'DECLINE' | 'MANUAL_REVIEW'
+export type PolicyCollateralType = 'RESIDENTIAL' | 'COMMERCIAL' | 'INDUSTRIAL' | 'LAND'
+
+export interface PolicyApplicantParams {
+  age_min: number | null
+  age_max: number | null
+  employment_types: PolicyEmploymentType[]
+  min_employment_vintage_years: number | null
+  residency: PolicyResidency[]
+}
+
+export interface PolicyFinancialParams {
+  min_monthly_income: number | null
+  /** Months of income averaged before assessing affordability. */
+  income_averaging_months: number | null
+  /** Discount applied to variable pay (incentives, bonus) before it counts. */
+  variable_income_haircut_percent: number | null
+  max_foir_percent: number | null
+  max_dti_percent: number | null
+  /** Discount applied to declared existing obligations. */
+  obligation_haircut_percent: number | null
+}
+
+export interface PolicyBureauParams {
+  min_bureau_score: number | null
+  /** How to treat an applicant with too little bureau history to score. */
+  thin_file_treatment: PolicyThinFileTreatment | null
+  max_dpd_30_count: number | null
+  max_dpd_90_count: number | null
+  exclude_write_off: boolean
+  exclude_settlement: boolean
+  max_enquiries_last_6m: number | null
+}
+
+/** Only meaningful for HL/LAP/WC, but stored for every product so a policy's
+ *  shape stays uniform; the form and detail view hide it for PL/BL. */
+export interface PolicyCollateralParams {
+  max_ltv_percent: number | null
+  min_property_value: number | null
+  valuation_age_max_months: number | null
+  accepted_collateral_types: PolicyCollateralType[]
+}
+
+export interface PolicyPricingParams {
+  min_amount: number | null
+  max_amount: number | null
+  min_tenure_years: number | null
+  max_tenure_years: number | null
+  base_rate_percent: number | null
+  max_risk_premium_percent: number | null
+  processing_fee_percent: number | null
+}
+
+export interface PolicyDecisionParams {
+  hard_decline_triggers: string[]
+  refer_triggers: string[]
+  /** Same DocumentType vocabulary as DOC_CATEGORIES/DOC_TYPE_LABEL. */
+  required_documents: DocumentType[]
+}
+
+/** A curated, bounded subset of the reference requirements sheet's parameter
+ *  groups — enough to express a real credit box, not the full field list. */
+export interface PolicyParams {
+  applicant: PolicyApplicantParams
+  financial: PolicyFinancialParams
+  bureau: PolicyBureauParams
+  collateral: PolicyCollateralParams
+  pricing: PolicyPricingParams
+  decision: PolicyDecisionParams
+}
+
+/**
+ * One version of a credit policy.
+ *
+ * Deliberately a slice of the enterprise "Configurable LOS Policy Engine"
+ * requirements: this is the authoring/browsing repository only. Nothing
+ * evaluates these params — there is no rule engine, no Decision-tab wiring
+ * and no Auto Run (the requirements sheet's own scope table puts those out of
+ * scope), and no maker-checker approval chain, because this app has only
+ * `dsa_partner` and `ops_admin` and no separate Approver role.
+ *
+ * Versioning is single-actor: `policy_code` is the stable identity, `version`
+ * increments, and a published version is duplicated as a new DRAFT rather
+ * than edited in place. Activating a version deactivates any other ACTIVE
+ * version sharing its `policy_code`. See the Policy-tab entry in
+ * /knowledge/lendstream-dsa-hub/knowledge.md.
+ */
+export interface Policy {
+  id: string
+  policy_code: string
+  version: number
+  name: string
+  description: string | null
+  product: PolicyProduct
+  status: PolicyStatus
+  /** Lower = evaluated first. Informational only — nothing consumes it yet. */
+  priority: number
+  effective_from: string | null
+  effective_to: string | null
+  change_reason: string | null
+  params: PolicyParams
+  created_by: string
+  created_at: string
+  updated_at: string
+  activated_at: string | null
+}
+
+export const POLICY_STATUS_STYLES: Record<PolicyStatus, string> = {
+  ACTIVE: 'bg-[#e8f3ee] text-[#16694a]',
+  DRAFT: 'bg-[#f7f0e2] text-[#85580d]',
+  INACTIVE: 'bg-[#efeeeb] text-[#7c7a75]',
+}
+
+export const POLICY_STATUS_LABEL: Record<PolicyStatus, string> = {
+  ACTIVE: 'Active', DRAFT: 'Draft', INACTIVE: 'Inactive',
+}
+
+/** Knock-out reasons an ops admin can pin to a policy. Free checkbox subset —
+ *  labels only; nothing in this scope evaluates them. */
+export const POLICY_HARD_DECLINE_TRIGGERS: Record<string, string> = {
+  BUREAU_DEFAULT: 'Bureau default',
+  FRAUD_FLAG: 'Fraud flag',
+  NEGATIVE_GEOGRAPHY: 'Negative geography',
+  WRITE_OFF_ON_FILE: 'Write-off on file',
+}
+
+export const POLICY_REFER_TRIGGERS: Record<string, string> = {
+  THIN_FILE: 'Thin file',
+  INCOME_UNVERIFIED: 'Income unverified',
+  HIGH_FOIR: 'High FOIR',
+  SCORE_BELOW_CUTOFF: 'Score below cutoff',
 }
 
 // Exact colors sampled from the reference mockup's computed styles.

@@ -1,17 +1,14 @@
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Building2, Plus, UserPlus } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Building2, ListChecks, Plus, UserPlus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardHead, CardBody } from '@/components/ui/Card'
 import { Avatar } from '@/components/shared/Avatar'
 import { fmtAmount } from '@/lib/format'
 import { ApplicantIdentityCard } from '@/components/shared/ApplicantIdentityCard'
 import { KeyPersonnelList } from '@/components/shared/KeyPersonnelList'
-import { STAGE_LABELS, VERDICT_STYLES, type Applicant, type KeyPersonnel, type Lead } from '@/lib/types'
+import { LOAN_TYPE_LABEL, STAGE_LABELS, VERDICT_STYLES, type Applicant, type KeyPersonnel, type Lead } from '@/lib/types'
 
-const LOAN_TYPE_LABEL: Record<string, string> = {
-  PL: 'Personal Loan', HL: 'Home Loan', LAP: 'Loan Against Property', BOTH: 'PL + HL', BL: 'Business Loan', WC: 'Working Capital',
-}
 const CLOSED_STAGES = new Set(['DISBURSED', 'DROPPED'])
 
 function Field({ label, value }: { label: string; value: string | null }) {
@@ -115,12 +112,20 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
           </div>
         </div>
         {isOwn && (
-          <Link
-            href={`/partner/applicants/${applicant.id}/application/new`}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#1a1917] px-4 py-2.5 text-[13px] font-semibold text-white hover:opacity-90"
-          >
-            <Plus size={14} strokeWidth={3} /> New application
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={`/partner/applicants/${applicant.id}/task/new`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#dcdbd6] bg-[#f7f6f4] px-4 py-2.5 text-[13px] font-semibold text-[#47453f] hover:bg-[#efeeeb]"
+            >
+              <ListChecks size={14} /> Add task
+            </Link>
+            <Link
+              href={`/partner/applicants/${applicant.id}/application/new`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#1a1917] px-4 py-2.5 text-[13px] font-semibold text-white hover:opacity-90"
+            >
+              <Plus size={14} strokeWidth={3} /> New application
+            </Link>
+          </div>
         )}
       </div>
 
