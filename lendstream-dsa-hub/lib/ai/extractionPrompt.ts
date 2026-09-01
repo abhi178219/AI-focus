@@ -84,10 +84,74 @@ const bankStatementSchema = z.object({
   debit_categories: z.array(categorySchema).nullable(),
 })
 
-const itrSchema = z.object({
+/**
+ * One assessment year off an ITR set. A single "ITR (3 years)" upload normally
+ * carries two or three returns, so the year is the unit — the same way a bank
+ * statement is captured month by month.
+ */
+const itrYearSchema = z.object({
   assessment_year: z.string().nullable(),
+  /** The previous year the return covers — labels the multi-year comparatives. */
+  financial_year: z.string().nullable(),
+  itr_form: z.string().nullable(),
+  nature_of_income: z.string().nullable(),
+  /** 44AD / 44ADA / 44AE — detailed expense lines are absent on these returns. */
+  is_presumptive: z.boolean().nullable(),
+  presumptive_section: z.string().nullable(),
+  /** Income by head. */
   gross_total_income: z.number().nullable(),
+  taxable_income: z.number().nullable(),
+  total_deductions: z.number().nullable(),
+  salary_income: z.number().nullable(),
+  business_income: z.number().nullable(),
+  rental_income: z.number().nullable(),
+  interest_income: z.number().nullable(),
+  other_income: z.number().nullable(),
+  /** Computation of business / professional income. */
+  business_turnover: z.number().nullable(),
+  gross_profit: z.number().nullable(),
+  net_profit: z.number().nullable(),
+  depreciation: z.number().nullable(),
+  interest_expense: z.number().nullable(),
+  partner_remuneration: z.number().nullable(),
+  business_expenses: z.number().nullable(),
+  losses_carried_forward: z.number().nullable(),
+  /** Tax compliance. */
+  tax_payable: z.number().nullable(),
   tax_paid: z.number().nullable(),
+  advance_tax_paid: z.number().nullable(),
+  tds_credit: z.number().nullable(),
+  tax_demand_outstanding: z.number().nullable(),
+  filing_date: z.string().nullable(),
+  filed_on_time: z.boolean().nullable(),
+  return_status: z.string().nullable(),
+  is_revised_return: z.boolean().nullable(),
+  revision_count: z.number().nullable(),
+  /** Balance-sheet block, present on ITR-3 and some ITR-5 returns. */
+  net_worth: z.number().nullable(),
+  business_assets: z.number().nullable(),
+  unsecured_loans: z.number().nullable(),
+  capital_introduced: z.number().nullable(),
+  trade_creditors: z.number().nullable(),
+  negative_capital: z.boolean().nullable(),
+})
+
+const itrSchema = z.object({
+  assessee_name: z.string().nullable(),
+  pan_number: z.string().nullable(),
+  /** Latest year's headline figures, mirrored by the last entry of `years`. */
+  assessment_year: z.string().nullable(),
+  itr_form: z.string().nullable(),
+  nature_of_income: z.string().nullable(),
+  is_presumptive: z.boolean().nullable(),
+  gross_total_income: z.number().nullable(),
+  taxable_income: z.number().nullable(),
+  business_turnover: z.number().nullable(),
+  net_profit: z.number().nullable(),
+  tax_paid: z.number().nullable(),
+  tax_demand_outstanding: z.number().nullable(),
+  /** Every return in the upload, OLDEST FIRST — powers the income trend. */
+  years: z.array(itrYearSchema).nullable(),
 })
 
 const gstSchema = z.object({
@@ -259,7 +323,7 @@ const FIELD_HINTS: Record<DocumentType, string> = {
   AADHAAR: 'name, dob, address, aadhaar_last4 (ONLY the last 4 digits — never output the full 12-digit number)',
   SALARY_SLIP: 'employee_name, employer_name, month, gross_salary (number), net_salary (number), deductions (number)',
   BANK_STATEMENT: 'account_holder_name, account_number (mask all but the last 4 digits), bank_name, ifsc, branch, account_type, avg_monthly_balance (number), monthly_credits (array of numbers), monthly_debits (array of numbers), salary_credits_detected (boolean), months (array of {month, credits, debits, closing_balance, min_balance, bounces} — one entry per statement month), total_bounces (number), cash_deposit_percent (number), od_sanctioned_limit (number), od_utilisation_percent (number), account_vintage_months (number), aa_verified (boolean — true only if the statement is an Account Aggregator pull), top_inflows (array of {name, amount, txn_count, share_percent, recurring, first_seen, last_seen} — the largest payers by total credit, read off the narrations, highest first), top_outflows (same shape — the largest suppliers/vendors by total debit), credit_categories (array of {label, amount, share_percent} classifying every credit, e.g. "Business receipts", "Cash deposits", "Loan disbursements", "Inter-account transfers", "Other credits"), debit_categories (same shape, e.g. "Supplier payments", "Salary & wages", "Statutory — GST, TDS, PF", "Loan EMIs", "Rent & utilities", "Promoter drawings", "Cash withdrawals")',
-  ITR: 'assessment_year, gross_total_income (number), tax_paid (number)',
+  ITR: 'assessee_name, pan_number, and for the LATEST assessment year: assessment_year (e.g. "2025-26"), itr_form, nature_of_income, is_presumptive (boolean), gross_total_income (number), taxable_income (number), business_turnover (number), net_profit (number), tax_paid (number), tax_demand_outstanding (number). Also years (array, OLDEST FIRST, one entry per assessment year the upload contains — an ITR set normally carries two or three) where each entry has: assessment_year, financial_year (the previous year the return covers, e.g. "2024-25"), itr_form ("ITR-1" | "ITR-2" | "ITR-3" | "ITR-4" | "ITR-5" | "ITR-6" | "ITR-7"), nature_of_income ("SALARIED" | "PROPRIETOR" | "PARTNER" | "DIRECTOR" | "PROFESSIONAL" | "COMMISSION_FREELANCE" | "RENT_INVESTMENT" | "AGRICULTURE" — the head the bulk of the income sits under), is_presumptive (boolean — true when income is declared under section 44AD, 44ADA or 44AE), presumptive_section ("44AD" | "44ADA" | "44AE"), gross_total_income (number), taxable_income (number — total income after Chapter VI-A), total_deductions (number — Chapter VI-A deductions), salary_income (number), business_income (number — income from business or profession), rental_income (number — income from house property), interest_income (number), other_income (number), business_turnover (number — gross receipts / turnover / sales), gross_profit (number), net_profit (number), depreciation (number), interest_expense (number — interest debited to the P&L), partner_remuneration (number — remuneration and interest paid to partners), business_expenses (number — total expenses debited), losses_carried_forward (number), tax_payable (number), tax_paid (number — total taxes paid), advance_tax_paid (number), tds_credit (number — TDS credit claimed), tax_demand_outstanding (number — 0 if no demand), filing_date (date the return was filed), filed_on_time (boolean — true if filed on or before the due date for that year), return_status ("FILED" | "PROCESSED" | "UNDER_PROCESSING" | "DEFECTIVE" | "REVISED"), is_revised_return (boolean), revision_count (number), net_worth (number — proprietor/partner capital or shareholders funds, negative if capital is eroded), business_assets (number — total assets on the balance sheet), unsecured_loans (number — unsecured and related-party loans), capital_introduced (number — capital introduced during the year), trade_creditors (number — sundry creditors), negative_capital (boolean). Leave any field the return does not carry as null — a presumptive 44AD/44ADA return will have no detailed expense, depreciation or balance-sheet lines, and a salaried ITR-1 will have no business figures',
   GST_RETURNS: 'gstin, legal_name, trade_name, turnover (number — annual, only if stated), filing_month, filing_frequency ("MONTHLY" | "QUARTERLY" | "COMPOSITION"), business_type ("MANUFACTURER" | "TRADER" | "RETAILER" | "WHOLESALER" | "SERVICE_PROVIDER"), monthly_turnover (array of {month, taxable_value} — one entry per GSTR-3B period, oldest first), prior_year_turnover (number), returns_due (number), returns_filed (number), late_filings (number), tax_paid (number), itc_claimed (number), top_counterparty_percent (number — largest buyer as a share of turnover), top_five_counterparty_percent (number)',
   PROPERTY_DEED: 'owner_name, property_address, registered_value (number)',
   BUILDER_AGREEMENT: 'owner_name, property_address, registered_value (number)',

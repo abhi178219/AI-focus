@@ -218,6 +218,17 @@ export interface Assessment {
   pillars?: AssessmentPillar[]
 }
 
+/** One section's AI-generated summary — see leads.case_narrative for the
+ *  single-lead precedent this generalises to one row per (lead, section). */
+export interface SectionSummary {
+  id: string
+  lead_id: string
+  section_code: string
+  summary: string
+  model: string | null
+  generated_at: string
+}
+
 // Exact colors sampled from the reference mockup's computed styles.
 export interface LenderOffer {
   id: string

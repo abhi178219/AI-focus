@@ -2,7 +2,8 @@ import Link from 'next/link'
 import { Upload } from 'lucide-react'
 import { Card, CardHead, CardBody } from '@/components/ui/Card'
 import { BandPill, BandBar } from '@/components/ui/BandPill'
-import { BAND_SOLID, BAND_STYLES, type Band } from '@/lib/types'
+import { SectionSummaryCard } from '@/components/shared/SectionSummaryCard'
+import { BAND_SOLID, BAND_STYLES, type Band, type SectionSummary } from '@/lib/types'
 import type {
   SectionView, SectionHero, SectionMeter, SectionTrend, SectionRankedList,
   SectionBreakdown, SectionRatioGrid, SectionSignalGroup, SectionBandPanel,
@@ -12,12 +13,20 @@ import type {
  * Full-page view of one analytical section (Banking, GST, Bureau, …).
  *
  * Renders whatever the parsed document actually yielded, in the prototype's
- * order: gauge → trend → hero tiles → tables → signals → ranked lists →
- * breakdowns → ratios → panels → prose → capacity → policy. Anything the
- * document did not contain shows as "—"; if the document itself is absent we
- * say so and link to upload it rather than rendering placeholder numbers.
+ * order: upload prompt or AI summary → gauge → trend → hero tiles → tables →
+ * signals → ranked lists → breakdowns → ratios → panels → prose → capacity →
+ * policy. Anything the document did not contain shows as "—"; if the
+ * document itself is absent we say so and link to upload it rather than
+ * rendering placeholder numbers.
  */
-export function SectionPanel({ section, basePath, leadId }: { section: SectionView; basePath: string; leadId: string }) {
+export function SectionPanel({
+  section, basePath, leadId, summary,
+}: {
+  section: SectionView
+  basePath: string
+  leadId: string
+  summary?: SectionSummary | null
+}) {
   const hasHero = !!section.hero?.length
   const hero: SectionHero[] = section.hero ?? section.metrics.map((m) => ({ label: m.label, value: m.value }))
 
@@ -26,6 +35,18 @@ export function SectionPanel({ section, basePath, leadId }: { section: SectionVi
       {/* The section still renders its full shape when the source is absent —
           every figure reads "—" and this banner says what to go and get. */}
       {section.status === 'missing' && <SourcePrompt section={section} basePath={basePath} leadId={leadId} />}
+
+      {/* Nothing to summarize until a real document backs this section. */}
+      {section.status === 'ready' && (
+        <SectionSummaryCard
+          leadId={leadId}
+          sectionCode={section.key}
+          sectionLabel={section.label}
+          summary={summary?.summary ?? null}
+          model={summary?.model ?? null}
+          generatedAt={summary?.generated_at ?? null}
+        />
+      )}
 
       {section.meter && <Meter meter={section.meter} />}
       {section.trend && <Trend trend={section.trend} />}
@@ -149,7 +170,11 @@ export function SectionPanel({ section, basePath, leadId }: { section: SectionVi
                       </li>
                     ))}
                   </ul>
-                ) : (
+                ) : section.chips?.items?.length ? null : (
+                  // Only claim "clear" when there's neither a knockout NOR a
+                  // chip item — showing this line above an actual list of
+                  // flagged items (e.g. ITR red flags) would read as a direct
+                  // contradiction of what's printed right below it.
                   <p className={`inline-flex rounded-full px-3 py-1.5 text-[12px] font-semibold ${BAND_STYLES[section.chips!.band]}`}>
                     Clears policy — no knockouts.
                   </p>

@@ -19,7 +19,7 @@ import {
  */
 
 export type SectionCode =
-  | 'BANKING' | 'GST' | 'BUREAU' | 'FINANCIALS' | 'BUSINESS' | 'STOCK' | 'COLLATERAL'
+  | 'BANKING' | 'ITR' | 'GST' | 'BUREAU' | 'FINANCIALS' | 'BUSINESS' | 'STOCK' | 'COLLATERAL'
 
 export interface SectionMetric {
   label: string
@@ -267,6 +267,7 @@ function isSecured(lead: Lead): boolean {
 export function buildSections(lead: Lead, documents: DocumentRow[]): SectionView[] {
   return [
     banking(lead, documents),
+    itr(lead, documents),
     gst(lead, documents),
     bureau(lead, documents),
     financials(lead, documents),
@@ -274,6 +275,33 @@ export function buildSections(lead: Lead, documents: DocumentRow[]): SectionView
     stock(lead, documents),
     collateral(lead, documents),
   ]
+}
+
+/**
+ * Flattens whatever a built section actually populated into plain-text
+ * facts — the exact same figures already on screen, nothing re-derived from
+ * raw extracted_json. Feeds the AI-summary prompt for any section uniformly,
+ * so "do not invent numbers" holds by construction: the model only ever
+ * sees numbers this app already computed and displayed.
+ */
+export function sectionFacts(section: SectionView): string {
+  const lines: string[] = [`${section.label}: ${section.headline}`]
+  for (const m of section.metrics) if (m.value) lines.push(`${m.label}: ${m.value}`)
+  for (const h of [...(section.hero ?? []), ...(section.subHero ?? [])]) {
+    if (h.value) lines.push(`${h.label}: ${h.value}${h.sub ? ` (${h.sub})` : ''}`)
+  }
+  for (const row of section.signals?.rows ?? []) {
+    if (row.value) lines.push(`${row.label}: ${row.value}${row.note ? ` — ${row.note}` : ''}`)
+  }
+  for (const p of section.panels ?? []) {
+    for (const item of p.items) if (item.value) lines.push(`${p.title} — ${item.label}: ${item.value}`)
+  }
+  if (section.chips?.items?.length) lines.push(`${section.chips.title}: ${section.chips.items.join('; ')}`)
+  if (section.notes?.items?.length) lines.push(...section.notes.items.map((n) => `Note: ${n}`))
+  if (section.conduct) lines.push(`${section.conduct.title} (${section.conduct.band}): ${section.conduct.text}`)
+  if (section.capacity?.value) lines.push(`${section.capacity.label}: ${section.capacity.value}`)
+  if (section.knockouts?.length) lines.push(`Policy knockouts: ${section.knockouts.map((k) => k.label).join('; ')}`)
+  return lines.join('\n')
 }
 
 /** Stand-in for an absent document so a section can still build its skeleton. */
@@ -508,6 +536,601 @@ function banking(lead: Lead, documents: DocumentRow[]): SectionView {
             : bounces === 0
               ? 'No returns across the statement period. Balance never breached the minimum.'
               : `${bounces} return${bounces === 1 ? '' : 's'} across the statement period — lenders will ask for the reason on each.`,
+        }
+      : undefined,
+  }
+}
+
+/* --------------------------------------------------------------------- ITR */
+
+/** One assessment year off the return set — a "3 years" upload carries two or three. */
+interface ItrYear {
+  /** Column caption — "AY 2025-26" where the return states it. */
+  label: string
+  assessmentYear: string | null
+  financialYear: string | null
+  form: string | null
+  nature: string | null
+  presumptive: boolean | null
+  presumptiveSection: string | null
+  grossTotalIncome: number | null
+  taxableIncome: number | null
+  deductions: number | null
+  salary: number | null
+  businessIncome: number | null
+  rental: number | null
+  interestIncome: number | null
+  otherIncome: number | null
+  turnover: number | null
+  grossProfit: number | null
+  netProfit: number | null
+  depreciation: number | null
+  interestExpense: number | null
+  remuneration: number | null
+  businessExpenses: number | null
+  lossesCarriedForward: number | null
+  taxPayable: number | null
+  taxPaid: number | null
+  advanceTax: number | null
+  tdsCredit: number | null
+  demand: number | null
+  filingDate: string | null
+  filedOnTime: boolean | null
+  returnStatus: string | null
+  revised: boolean | null
+  revisionCount: number | null
+  netWorth: number | null
+  businessAssets: number | null
+  unsecuredLoans: number | null
+  capitalIntroduced: number | null
+  tradeCreditors: number | null
+  negativeCapital: boolean | null
+}
+
+const ITR_NATURE_LABEL: Record<string, string> = {
+  SALARIED: 'Salaried', PROPRIETOR: 'Proprietor', PARTNER: 'Partner in a firm',
+  DIRECTOR: 'Director / shareholder', PROFESSIONAL: 'Professional',
+  COMMISSION_FREELANCE: 'Commission / freelance', RENT_INVESTMENT: 'Rent & investment',
+  AGRICULTURE: 'Agricultural',
+}
+
+/** How dependable each head of income is on its own, before the file's other evidence. */
+const ITR_NATURE_BAND: Record<string, Band> = {
+  SALARIED: 'STRONG', PROPRIETOR: 'GOOD', PARTNER: 'GOOD', DIRECTOR: 'GOOD',
+  PROFESSIONAL: 'GOOD', COMMISSION_FREELANCE: 'MODERATE',
+  RENT_INVESTMENT: 'MODERATE', AGRICULTURE: 'MODERATE',
+}
+
+function itrYear(o: Record<string, unknown>, fallbackLabel: string): ItrYear {
+  const ay = str(o.assessment_year)
+  const fy = str(o.financial_year)
+  return {
+    label: ay ? `AY ${ay}` : fy ? `FY ${fy}` : fallbackLabel,
+    assessmentYear: ay,
+    financialYear: fy,
+    form: str(o.itr_form),
+    nature: str(o.nature_of_income)?.toUpperCase().replace(/\s+/g, '_') ?? null,
+    presumptive: bool(o.is_presumptive),
+    presumptiveSection: str(o.presumptive_section),
+    grossTotalIncome: num(o.gross_total_income),
+    taxableIncome: num(o.taxable_income),
+    deductions: num(o.total_deductions),
+    salary: num(o.salary_income),
+    businessIncome: num(o.business_income),
+    rental: num(o.rental_income),
+    interestIncome: num(o.interest_income),
+    otherIncome: num(o.other_income),
+    turnover: num(o.business_turnover),
+    grossProfit: num(o.gross_profit),
+    netProfit: num(o.net_profit),
+    depreciation: num(o.depreciation),
+    interestExpense: num(o.interest_expense),
+    remuneration: num(o.partner_remuneration),
+    businessExpenses: num(o.business_expenses),
+    lossesCarriedForward: num(o.losses_carried_forward),
+    taxPayable: num(o.tax_payable),
+    taxPaid: num(o.tax_paid),
+    advanceTax: num(o.advance_tax_paid),
+    tdsCredit: num(o.tds_credit),
+    demand: num(o.tax_demand_outstanding),
+    filingDate: str(o.filing_date),
+    filedOnTime: bool(o.filed_on_time),
+    returnStatus: str(o.return_status)?.toUpperCase().replace(/\s+/g, '_') ?? null,
+    revised: bool(o.is_revised_return),
+    revisionCount: num(o.revision_count),
+    netWorth: num(o.net_worth),
+    businessAssets: num(o.business_assets),
+    unsecuredLoans: num(o.unsecured_loans),
+    capitalIntroduced: num(o.capital_introduced),
+    tradeCreditors: num(o.trade_creditors),
+    negativeCapital: bool(o.negative_capital),
+  }
+}
+
+/** Points per band, so several component reads can be averaged into one. */
+const BAND_POINTS: Record<Band, number> = {
+  STRONG: 90, GOOD: 75, MODERATE: 60, WEAK: 45, CRITICAL: 25,
+}
+/** The worse of the bands supplied — a cross-check is only as good as its weakest leg. */
+function worstBand(bands: (Band | null)[]): Band | null {
+  const present = bands.filter((b): b is Band => b !== null)
+  if (!present.length) return null
+  return present.reduce((a, b) => (BAND_POINTS[b] < BAND_POINTS[a] ? b : a))
+}
+
+function itr(lead: Lead, documents: DocumentRow[]): SectionView {
+  const found = docOf(documents, 'ITR')
+  const src = found ?? EMPTY_SOURCE
+  const hasSource = found !== null
+  const d = src.data
+
+  // The upload is a set of returns. Where the parse gave only headline figures
+  // we still build a single year off them, so the tab keeps its shape.
+  const yearRows = arr(d.years)
+  const years: ItrYear[] = yearRows.length
+    ? yearRows.map((y, i) => itrYear(y, `Year ${i + 1}`))
+    : [itrYear(d, 'Latest')]
+  const latest = years[years.length - 1]
+  const oldest = years[0]
+
+  const marginOf = (y: ItrYear) => y.netProfit !== null && y.turnover ? (y.netProfit / y.turnover) * 100 : null
+  const cashProfitOf = (y: ItrYear) =>
+    y.netProfit === null ? null : y.netProfit + (y.depreciation ?? 0) + (y.remuneration ?? 0)
+
+  // ---- Income level and trend ---------------------------------------------
+  const incomeSeries = years.map((y) => y.grossTotalIncome)
+  const presentIncome = incomeSeries.filter((v): v is number => v !== null)
+  const avgIncome = mean(presentIncome)
+  const sd = stddev(presentIncome)
+  const cov = sd !== null && avgIncome ? (sd / avgIncome) * 100 : null
+
+  // Year-on-year steps between consecutive returns, oldest first.
+  const steps = years.slice(1).map((y, i) => {
+    const prev = years[i].grossTotalIncome
+    return prev !== null && prev > 0 && y.grossTotalIncome !== null
+      ? ((y.grossTotalIncome - prev) / prev) * 100 : null
+  })
+  const latestStep = steps.length ? steps[steps.length - 1] : null
+  const earlierAvgStep = mean(steps.slice(0, -1).filter((s): s is number => s !== null))
+  const spanYears = years.length - 1
+  const cagr = oldest.grossTotalIncome !== null && oldest.grossTotalIncome > 0
+    && latest.grossTotalIncome !== null && spanYears > 0
+    ? (Math.pow(latest.grossTotalIncome / oldest.grossTotalIncome, 1 / spanYears) - 1) * 100 : null
+
+  // The pattern that matters is not growth — it is growth that arrives only in
+  // the year before the application and that the earlier years do not support.
+  const suddenJump = latestStep !== null && latestStep >= 50
+    && (earlierAvgStep === null || earlierAvgStep <= 20)
+
+  const stabilityBand: Band | null = presentIncome.length < 2 ? null
+    : suddenJump ? 'WEAK'
+    : latestStep !== null && latestStep < -20 ? 'WEAK'
+    : cov !== null && cov <= 15 ? 'STRONG'
+    : cov !== null && cov <= 30 ? 'GOOD'
+    : 'MODERATE'
+
+  const stabilityText = presentIncome.length < 2 ? 'One year on file — trend not assessable'
+    : suddenJump ? 'Sudden step-up in the latest year'
+    : latestStep !== null && latestStep < -20 ? 'Declining'
+    : stabilityBand === 'STRONG' ? 'Consistent'
+    : stabilityBand === 'GOOD' ? 'Broadly steady' : 'Uneven'
+
+  // ---- Nature of income ----------------------------------------------------
+  const nature = latest.nature
+  const natureLabel = nature ? ITR_NATURE_LABEL[nature] ?? titleCase(nature) : null
+  const natureBand = nature ? ITR_NATURE_BAND[nature] ?? null : null
+  const presumptive = latest.presumptive
+  const presumptiveSection = latest.presumptiveSection
+
+  // ---- Profit computation --------------------------------------------------
+  const latestMargin = marginOf(latest)
+  const priorMargin = years.length > 1 ? marginOf(years[years.length - 2]) : null
+  const marginBand: Band | null = latestMargin === null ? null
+    : latestMargin >= 15 ? 'STRONG' : latestMargin >= 8 ? 'GOOD'
+    : latestMargin >= 4 ? 'MODERATE' : latestMargin > 0 ? 'WEAK' : 'CRITICAL'
+  const cashProfit = cashProfitOf(latest)
+  const lossYears = years.filter((y) => y.netProfit !== null && y.netProfit < 0).length
+
+  // ---- Tax compliance ------------------------------------------------------
+  const lateYears = years.filter((y) => y.filedOnTime === false).length
+  const timingKnown = years.some((y) => y.filedOnTime !== null)
+  const revisedYears = years.filter((y) => y.revised === true || (y.revisionCount ?? 0) > 0).length
+  const defective = years.some((y) => y.returnStatus === 'DEFECTIVE')
+  const demandValues = years.map((y) => y.demand).filter((v): v is number => v !== null)
+  const demandTotal = demandValues.length ? demandValues.reduce((s, v) => s + v, 0) : null
+  const taxShortfall = latest.taxPayable !== null && latest.taxPaid !== null
+    ? latest.taxPayable - latest.taxPaid : null
+  const effectiveTaxRate = latest.taxPaid !== null && latest.grossTotalIncome
+    ? (latest.taxPaid / latest.grossTotalIncome) * 100 : null
+  const statusKnown = years.some((y) => y.returnStatus !== null)
+
+  const complianceBand: Band | null = !timingKnown && demandTotal === null && !statusKnown ? null
+    : defective || (demandTotal ?? 0) > 0 ? 'WEAK'
+    : lateYears >= 2 || revisedYears >= 2 ? 'WEAK'
+    : lateYears === 1 || revisedYears === 1 ? 'MODERATE'
+    : taxShortfall !== null && taxShortfall > 0 ? 'MODERATE'
+    : 'STRONG'
+
+  // ---- Turnover credibility: ITR against GST and against banking ----------
+  const gstFound = docOf(documents, 'GST_RETURNS')
+  const gstMonthly = gstFound ? arr(gstFound.data.monthly_turnover).map((m) => num(m.taxable_value)).filter((v): v is number => v !== null) : []
+  const gstTurnover = gstFound
+    ? num(gstFound.data.turnover) ?? (gstMonthly.length ? gstMonthly.reduce((s, v) => s + v, 0) : null)
+    : null
+  const gstDelta = latest.turnover !== null && gstTurnover !== null && gstTurnover > 0
+    ? ((latest.turnover - gstTurnover) / gstTurnover) * 100 : null
+  const gstGap = gstDelta === null ? null : Math.abs(gstDelta)
+  const gstBand: Band | null = gstGap === null ? null
+    : gstGap <= 10 ? 'STRONG' : gstGap <= 20 ? 'GOOD' : gstGap <= 35 ? 'MODERATE'
+    : gstGap <= 50 ? 'WEAK' : 'CRITICAL'
+
+  const bankFound = docOf(documents, 'BANK_STATEMENT')
+  const bankMonthly = bankFound ? numList(bankFound.data.monthly_credits) : []
+  const bankTotal = bankMonthly.length ? bankMonthly.reduce((s, v) => s + v, 0) : null
+  // Statements rarely run exactly twelve months; annualise so the comparison
+  // against a full year's return is like for like, and say so in the note.
+  const annualisedCredits = bankTotal !== null && bankMonthly.length
+    ? (bankTotal / bankMonthly.length) * 12 : null
+  // Cash-heavy credits undercut the turnover comparison itself — the money
+  // arrived, but the return cannot say who it came from.
+  const cashDepositPercent = bankFound ? num(bankFound.data.cash_deposit_percent) : null
+  const declaredForBank = latest.turnover ?? latest.grossTotalIncome
+  const bankRatio = declaredForBank !== null && annualisedCredits
+    ? declaredForBank / annualisedCredits : null
+  const bankBand: Band | null = bankRatio === null ? null
+    : bankRatio >= 0.75 && bankRatio <= 1.25 ? 'STRONG'
+    : bankRatio >= 0.6 && bankRatio <= 1.4 ? 'GOOD'
+    : bankRatio >= 0.5 && bankRatio <= 1.6 ? 'MODERATE'
+    : 'WEAK'
+  const credibilityBand = worstBand([gstBand, bankBand])
+  const bankMismatchNote = bankRatio === null ? ''
+    : bankRatio < 0.5 ? ' — banking runs well ahead of the declared income'
+    : bankRatio > 1.6 ? ' — the declared figure is not landing in this account' : ''
+
+  // ---- Assets and liabilities ---------------------------------------------
+  const netWorth = latest.netWorth
+  const negativeCapital = latest.negativeCapital === true || (netWorth !== null && netWorth < 0)
+  const netWorthBand: Band | null = netWorth === null ? (latest.negativeCapital === true ? 'CRITICAL' : null)
+    : netWorth < 0 ? 'CRITICAL'
+    : latest.unsecuredLoans !== null && netWorth > 0 && latest.unsecuredLoans > netWorth ? 'WEAK'
+    : netWorth >= 0 ? 'GOOD' : null
+
+  // ---- Red flags: only the ones the parsed figures actually evidence -------
+  const flags: string[] = []
+  if (suddenJump && latestStep !== null) flags.push(`Income up ${latestStep.toFixed(0)}% in the latest year alone`)
+  if (latestStep !== null && latestStep < -20) flags.push(`Income down ${Math.abs(latestStep).toFixed(0)}% year on year`)
+  if (latestMargin !== null && priorMargin !== null && priorMargin - latestMargin >= 5) {
+    flags.push(`Margin down ${(priorMargin - latestMargin).toFixed(1)} pts`)
+  }
+  if (lossYears >= 2) flags.push(`Losses in ${lossYears} of ${years.length} years`)
+  if ((latest.lossesCarriedForward ?? 0) > 0) flags.push(`${money(latest.lossesCarriedForward)} losses carried forward`)
+  if (gstGap !== null && gstGap > 25) flags.push(`ITR turnover ${gstDelta! > 0 ? 'above' : 'below'} GST by ${gstGap.toFixed(0)}%`)
+  if (bankRatio !== null && bankRatio < 0.5) flags.push('Bank credits far exceed declared income')
+  if (cashDepositPercent !== null && cashDepositPercent > 25) {
+    flags.push(`Cash is ${cashDepositPercent.toFixed(0)}% of bank credits`)
+  }
+  if (bankRatio !== null && bankRatio > 1.6) flags.push('Declared turnover not seen in the banking')
+  if ((demandTotal ?? 0) > 0) flags.push(`${money(demandTotal)} tax demand outstanding`)
+  if (lateYears > 0) flags.push(`${lateYears} return${lateYears === 1 ? '' : 's'} filed after the due date`)
+  if (revisedYears >= 2) flags.push(`Returns revised in ${revisedYears} years`)
+  if (defective) flags.push('A return is marked defective')
+  if (negativeCapital) flags.push('Negative net worth / eroded capital')
+  if (latest.unsecuredLoans !== null && netWorth !== null && netWorth > 0 && latest.unsecuredLoans > netWorth) {
+    flags.push('Unsecured loans exceed net worth')
+  }
+  if (latest.otherIncome !== null && latest.grossTotalIncome && latest.otherIncome / latest.grossTotalIncome > 0.4) {
+    flags.push('Over 40% of income from other / one-off heads')
+  }
+  if (nature === 'COMMISSION_FREELANCE') flags.push('Income mainly commission / freelance')
+  if (latest.deductions !== null && latest.grossTotalIncome && latest.deductions / latest.grossTotalIncome > 0.25) {
+    flags.push('Deductions cut over 25% of gross income')
+  }
+  if (lead.existing_emis > 0 && latest.grossTotalIncome !== null && latest.grossTotalIncome > 0
+    && lead.existing_emis > (latest.grossTotalIncome / 12) * 0.5) {
+    flags.push('Existing EMIs above half of declared monthly income')
+  }
+
+  // ---- Section band: stability + compliance + credibility, less the flags --
+  const componentBands = [stabilityBand, complianceBand, credibilityBand, marginBand]
+    .filter((b): b is Band => b !== null)
+  const base = componentBands.length ? mean(componentBands.map((b) => BAND_POINTS[b])) : null
+  const band: Band | null = base === null ? null
+    : bandFromScore(Math.max(0, base - flags.length * 6))
+
+  // ---- Tables --------------------------------------------------------------
+  const cols = ['Head', ...years.map((y) => y.label)]
+  const moneyRow = (head: string, pick: (y: ItrYear) => number | null) =>
+    [head, ...years.map((y) => money(pick(y)))]
+  const textRow = (head: string, pick: (y: ItrYear) => string | null) =>
+    [head, ...years.map(pick)]
+
+  const incomeTable: SectionTable = {
+    title: 'Income computation',
+    sub: years.length > 1 ? `${years.length} assessment years, oldest first` : 'Latest return on file',
+    columns: cols,
+    rows: [
+      moneyRow('Salary income', (y) => y.salary),
+      moneyRow('Business / profession', (y) => y.businessIncome),
+      moneyRow('House property (rent)', (y) => y.rental),
+      moneyRow('Interest income', (y) => y.interestIncome),
+      moneyRow('Other income', (y) => y.otherIncome),
+      moneyRow('Gross total income', (y) => y.grossTotalIncome),
+      moneyRow('Less: Chapter VI-A deductions', (y) => y.deductions),
+      moneyRow('Taxable income', (y) => y.taxableIncome),
+    ],
+    emphasise: [5, 7],
+  }
+
+  const profitTable: SectionTable = {
+    title: 'Profit computation',
+    sub: 'Self-employed heads — blank on a salaried return, and thin where income is declared presumptively',
+    columns: cols,
+    rows: [
+      moneyRow('Gross receipts / turnover', (y) => y.turnover),
+      moneyRow('Gross profit', (y) => y.grossProfit),
+      moneyRow('Business expenses', (y) => y.businessExpenses),
+      moneyRow('Depreciation', (y) => y.depreciation),
+      moneyRow('Interest expense', (y) => y.interestExpense),
+      moneyRow('Partner remuneration', (y) => y.remuneration),
+      moneyRow('Net profit', (y) => y.netProfit),
+      textRow('Net margin', (y) => { const m = marginOf(y); return m === null ? null : pct1(m) }),
+      moneyRow('Cash profit (add back depreciation, remuneration)', cashProfitOf),
+      moneyRow('Losses carried forward', (y) => y.lossesCarriedForward),
+    ],
+    emphasise: [6, 8],
+  }
+
+  // ---- Observations: rule-based reads of the figures above, never filler ---
+  const observations: string[] = []
+  if (suddenJump && latestStep !== null) {
+    observations.push(`Gross income rises ${latestStep.toFixed(0)}% in ${latest.label}${earlierAvgStep !== null ? ` against ${earlierAvgStep.toFixed(0)}% average growth in the earlier years` : ''}. A step-up that lands immediately before the application needs the underlying business reason before the higher figure is used for sizing.`)
+  } else if (stabilityBand === 'STRONG' && avgIncome !== null) {
+    observations.push(`Gross income holds around ${money(avgIncome)} across ${years.length} years — a consistent figure is more credible for sizing than a single strong year.`)
+  }
+  if (presumptive === true) {
+    observations.push(`Income is declared presumptively${presumptiveSection ? ` under section ${presumptiveSection}` : ''} — a percentage of gross receipts rather than a computed profit. Detailed expense and depreciation lines will not be on the return, further business expenses cannot be claimed against it, and actual cash flow may be stronger than the declared taxable income. Lenders differ on the multiplier they apply to it.`)
+  }
+  if (cashProfit !== null && latest.netProfit !== null && cashProfit > latest.netProfit) {
+    observations.push(`Adding back ${money(latest.depreciation ?? 0)} depreciation and ${money(latest.remuneration ?? 0)} partner remuneration takes ${money(latest.netProfit)} net profit to ${money(cashProfit)} of cash profit. Whether that add-back is allowed is lender policy — it is shown, not applied.`)
+  }
+  if (gstGap !== null) {
+    observations.push(gstGap > 25
+      ? `ITR turnover of ${money(latest.turnover)} differs from GST turnover of ${money(gstTurnover)} by ${gstGap.toFixed(0)}%. A gap this wide usually means the income gets discounted or the file gets referred for deeper verification.`
+      : `ITR turnover of ${money(latest.turnover)} reconciles with GST turnover of ${money(gstTurnover)} within ${gstGap.toFixed(0)}%.`)
+  }
+  if (bankRatio !== null) {
+    observations.push(bankRatio < 0.5
+      ? `Annualised bank credits of ${money(annualisedCredits)} are well above the ${money(declaredForBank)} declared. Low declared income against heavy banking is a standard verification trigger.`
+      : bankRatio > 1.6
+        ? `${money(declaredForBank)} declared against ${money(annualisedCredits)} of annualised bank credits. Either receipts run through accounts not on file, or the declared figure is not supported by the banking.`
+        : `Declared income of ${money(declaredForBank)} sits in line with ${money(annualisedCredits)} of annualised bank credits.`)
+  }
+  if (cashDepositPercent !== null && cashDepositPercent > 25) {
+    observations.push(`${cashDepositPercent.toFixed(0)}% of bank credits are cash deposits. Cash-heavy receipts weaken the turnover comparison above, since the return cannot evidence where that money came from.`)
+  }
+  if (negativeCapital) {
+    observations.push('Capital is negative on the balance-sheet block of the return — accumulated losses or drawings have eroded the owner\'s stake, which most lenders treat as a decline or a heavy discount.')
+  }
+
+  return {
+    key: 'ITR', label: 'ITR', sourceType: 'ITR', sourceLabel: 'ITR',
+    status: hasSource ? 'ready' : 'missing', band: hasSource ? band : null,
+    headline: [
+      latest.assessmentYear ? `AY ${latest.assessmentYear}` : null,
+      latest.form,
+      natureLabel,
+      latest.grossTotalIncome !== null ? `${money(latest.grossTotalIncome)} gross income` : null,
+      presentIncome.length >= 2 ? stabilityText.toLowerCase() : null,
+    ].filter(Boolean).join(' · ') || (hasSource ? 'Return parsed' : 'ITR not on file yet'),
+    metrics: [
+      { label: 'Gross income', value: latest.grossTotalIncome !== null ? fmtL(latest.grossTotalIncome) : null },
+      { label: 'Turnover', value: latest.turnover !== null ? fmtCr(latest.turnover) : null },
+      { label: 'Margin', value: latestMargin !== null ? pct1(latestMargin) : null },
+      { label: 'Years on file', value: hasSource ? String(years.length) : null },
+    ],
+    trend: {
+      title: 'Income trend',
+      sub: !hasSource ? 'Gross total income — fills in per assessment year from the uploaded return'
+        : years.length > 1 ? `Gross total income across ${years.length} assessment years`
+        : 'Gross total income — one return on file',
+      right: latestStep === null ? null : {
+        text: `${latestStep >= 0 ? '+' : ''}${latestStep.toFixed(1)}% YoY`,
+        // Growth is not automatically good: a jump that only appears in the
+        // year before the application reads as a caution, not a strength.
+        band: suddenJump ? 'WEAK' : latestStep >= 0 ? 'STRONG' : 'CRITICAL',
+      },
+      points: years.map((y) => ({
+        label: y.label, value: y.grossTotalIncome, display: money(y.grossTotalIncome),
+      })),
+      axis: sparseAxis(years.map((y) => y.label)),
+      tiles: [
+        { label: 'Latest', value: money(latest.grossTotalIncome), sub: hasSource ? latest.label : null },
+        { label: 'Average', value: money(avgIncome), sub: hasSource ? `${years.length}-year mean` : null },
+        {
+          label: 'CAGR', value: cagr === null ? null : `${cagr >= 0 ? '+' : ''}${cagr.toFixed(1)}%`,
+          sub: spanYears > 0 ? `Over ${spanYears} year${spanYears === 1 ? '' : 's'}` : null,
+          band: cagr === null ? null : suddenJump ? 'MODERATE' : cagr >= 0 ? 'STRONG' : 'WEAK',
+        },
+        {
+          label: 'Stability', value: cov === null ? null : `${cov.toFixed(0)}% CoV`,
+          sub: hasSource ? stabilityText : null, band: stabilityBand,
+        },
+        { label: 'Turnover', value: money(latest.turnover), sub: latest.turnover !== null ? 'Latest year' : null },
+      ],
+    },
+    hero: [
+      { label: 'Gross total income', value: money(latest.grossTotalIncome), sub: latest.label },
+      { label: 'Taxable income', value: money(latest.taxableIncome), sub: latest.deductions !== null ? `After ${money(latest.deductions)} deductions` : null },
+      { label: 'Turnover', value: money(latest.turnover), sub: 'Gross receipts declared' },
+      { label: 'Net profit', value: money(latest.netProfit), sub: latestMargin !== null ? `${pct1(latestMargin)} margin` : null, band: marginBand },
+      { label: 'Tax paid', value: money(latest.taxPaid), sub: effectiveTaxRate !== null ? `${pct1(effectiveTaxRate)} of gross income` : null },
+    ],
+    tables: [incomeTable, profitTable],
+    signals: {
+      title: 'Signals',
+      sub: 'Income, nature, profit, compliance and credibility',
+      rows: [
+        {
+          label: 'Income trend & stability',
+          value: presentIncome.length < 2 ? null
+            : `${stabilityText}${cagr !== null ? ` · ${cagr >= 0 ? '+' : ''}${cagr.toFixed(1)}% CAGR` : ''}`,
+          band: stabilityBand,
+          note: !hasSource ? undefined
+            : presentIncome.length < 2
+              ? 'Only one assessment year parsed — two or three are needed to read a trend'
+            : suddenJump
+              ? 'Growth concentrated in the year before the application — verify the business reason before sizing on it'
+              : cov !== null ? `Coefficient of variation ${cov.toFixed(0)}% across ${years.length} years` : undefined,
+        },
+        {
+          label: 'Nature of income',
+          value: [natureLabel, latest.form].filter(Boolean).join(' · ') || null,
+          band: natureBand,
+          note: presumptive === true
+            ? `Presumptive income${presumptiveSection ? ` under ${presumptiveSection}` : ''} — declared as a percentage of receipts, so detailed expense data is not on the return and declared income may understate real cash flow`
+            : presumptive === false ? 'Regular computation — detailed expense lines available' : undefined,
+        },
+        {
+          label: 'Profit margin',
+          value: latestMargin !== null ? `${pct1(latestMargin)} on ${money(latest.turnover)}` : null,
+          band: marginBand,
+          note: presumptive === true
+            ? 'On a presumptive return this is the statutory rate, not a computed margin'
+            : priorMargin !== null ? `Prior year ${pct1(priorMargin)}` : undefined,
+        },
+        {
+          label: 'Cash profit after add-backs',
+          value: money(cashProfit),
+          band: cashProfit === null ? null : cashProfit > 0 ? 'GOOD' : 'WEAK',
+          note: 'Net profit plus depreciation and partner remuneration. Shown for reference — whether it is allowed as eligible income is lender policy.',
+        },
+        {
+          label: 'Filing discipline',
+          value: !timingKnown && !statusKnown ? null
+            : [
+                timingKnown ? (lateYears === 0 ? 'All returns on time' : `${lateYears} filed late`) : null,
+                latest.returnStatus ? titleCase(latest.returnStatus) : null,
+              ].filter(Boolean).join(' · '),
+          band: complianceBand,
+          note: revisedYears > 0
+            ? `Revised in ${revisedYears} of ${years.length} years${latest.filingDate ? ` · latest filed ${latest.filingDate}` : ''}`
+            : latest.filingDate ? `Latest return filed ${latest.filingDate}` : undefined,
+        },
+        {
+          label: 'Tax paid vs payable',
+          value: latest.taxPayable === null && latest.taxPaid === null ? null
+            : `${money(latest.taxPaid) ?? '—'} paid of ${money(latest.taxPayable) ?? '—'} payable`,
+          band: taxShortfall === null ? null : taxShortfall <= 0 ? 'STRONG' : 'MODERATE',
+          note: [
+            latest.advanceTax !== null ? `Advance tax ${money(latest.advanceTax)}` : null,
+            latest.tdsCredit !== null ? `TDS credit ${money(latest.tdsCredit)}` : null,
+          ].filter(Boolean).join(' · ') || undefined,
+        },
+        {
+          label: 'Outstanding demand',
+          value: demandTotal === null ? null : demandTotal > 0 ? money(demandTotal) : 'Nil',
+          band: demandTotal === null ? null : demandTotal > 0 ? 'WEAK' : 'STRONG',
+          note: demandTotal !== null && demandTotal > 0
+            ? 'An open demand has to be cleared or explained before most lenders will sanction' : undefined,
+        },
+        {
+          label: 'ITR vs GST turnover',
+          value: gstDelta === null ? null
+            : `${money(latest.turnover)} vs ${money(gstTurnover)} · ${gstDelta >= 0 ? '+' : ''}${gstDelta.toFixed(0)}%`,
+          band: gstBand,
+          note: gstFound === null
+            ? 'GST returns are not on file yet — nothing to verify the declared turnover against'
+            : latest.turnover === null
+              ? 'The ITR did not state a turnover, so no comparison is possible'
+              : gstGap !== null && gstGap > 25
+                ? 'A material mismatch — expect the income to be discounted or the file referred' : undefined,
+        },
+        {
+          label: 'ITR vs bank credits',
+          value: bankRatio === null ? null
+            : `${money(declaredForBank)} declared vs ${money(annualisedCredits)} credited`,
+          band: bankBand,
+          note: bankFound === null
+            ? 'No bank statement on file yet — the declared figures cannot be checked against actual credits'
+            : declaredForBank === null
+              ? 'The ITR yielded neither a turnover nor a gross income to compare'
+              : `Credits annualised from ${bankMonthly.length} statement month${bankMonthly.length === 1 ? '' : 's'}${bankMismatchNote}`,
+        },
+        {
+          label: 'Net worth',
+          value: money(netWorth),
+          band: netWorthBand,
+          note: negativeCapital
+            ? 'Negative capital on the return — accumulated losses or drawings have eroded the owner\'s stake'
+            : latest.unsecuredLoans !== null ? `Unsecured / related-party loans ${money(latest.unsecuredLoans)}` : undefined,
+        },
+      ],
+    },
+    panels: [
+      {
+        title: 'Return & filing',
+        sub: str(d.assessee_name) ?? undefined,
+        items: [
+          { label: 'Assessment year', value: latest.assessmentYear },
+          { label: 'Financial year', value: latest.financialYear },
+          { label: 'ITR form', value: latest.form },
+          { label: 'PAN', value: str(d.pan_number) },
+          { label: 'Nature of income', value: natureLabel },
+          {
+            label: 'Presumptive',
+            value: presumptive === null ? null
+              : presumptive ? `Yes${presumptiveSection ? ` · ${presumptiveSection}` : ''}` : 'No — regular computation',
+          },
+          { label: 'Return status', value: titleCase(latest.returnStatus) },
+          { label: 'Filed on', value: latest.filingDate },
+          {
+            label: 'Revisions',
+            value: latest.revisionCount !== null ? String(latest.revisionCount)
+              : latest.revised === null ? null : latest.revised ? 'Revised' : 'Original',
+          },
+        ],
+      },
+      {
+        title: 'Assets & liabilities',
+        sub: 'From the balance-sheet block of the return, where it carries one',
+        items: [
+          { label: negativeCapital ? 'Net worth (negative)' : 'Net worth', value: money(netWorth), emphasis: netWorth !== null && netWorth > 0 },
+          { label: 'Business assets', value: money(latest.businessAssets) },
+          { label: 'Unsecured / related-party loans', value: money(latest.unsecuredLoans) },
+          { label: 'Capital introduced', value: money(latest.capitalIntroduced) },
+          { label: 'Trade creditors', value: money(latest.tradeCreditors) },
+        ],
+      },
+    ],
+    // Held in place whenever a return is on file: with nothing computable
+    // triggering it renders the clear state rather than disappearing. Withheld
+    // entirely with no return, since "no red flags" would be a claim about a
+    // document nobody has read.
+    chips: hasSource
+      ? { title: 'Red flags', band: flags.length ? 'CRITICAL' : 'STRONG', items: flags }
+      : undefined,
+    notes: observations.length
+      ? { title: 'What the return says', sub: 'Read across income, profit, compliance and the cross-checks', items: observations }
+      : undefined,
+    conduct: hasSource && band
+      ? {
+          title: 'Income credibility',
+          band,
+          text: [
+            presentIncome.length >= 2
+              ? (suddenJump
+                  ? 'Income steps up sharply in the year before the application rather than building over the period on file.'
+                  : `Income is ${stabilityText.toLowerCase()} across ${years.length} assessment years.`)
+              : 'Only one assessment year is on file, so consistency cannot be read yet.',
+            complianceBand === 'STRONG' ? 'Returns are filed on time with no open demand.'
+              : complianceBand === null ? 'The return did not yield filing dates or status.'
+              : 'Filing or tax-payment history needs explaining before sanction.',
+            credibilityBand === null
+              ? 'Neither GST returns nor a bank statement is on file to verify the declared figures against.'
+              : credibilityBand === 'STRONG' || credibilityBand === 'GOOD'
+                ? 'Declared figures reconcile with the other documents on file.'
+                : 'Declared figures do not reconcile cleanly with the other documents on file.',
+          ].join(' '),
         }
       : undefined,
   }

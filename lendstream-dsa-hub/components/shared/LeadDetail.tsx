@@ -13,7 +13,7 @@ import { ApplicantPanel } from '@/components/shared/ApplicantPanel'
 import { buildSections, buildSignals, type SectionCode } from '@/lib/decision/sections'
 import {
   type Lead, type DocumentRow, type Assessment, type AssessmentPillar,
-  type LenderOffer, type LenderProduct, type Product, type Band,
+  type LenderOffer, type LenderProduct, type Product, type Band, type SectionSummary,
 } from '@/lib/types'
 
 /** Tab order matches the prototype exactly. */
@@ -21,6 +21,7 @@ const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'applicant', label: 'Applicant' },
   { key: 'banking', label: 'Banking' },
+  { key: 'itr', label: 'ITR' },
   { key: 'gst', label: 'GST' },
   { key: 'bureau', label: 'Bureau' },
   { key: 'financials', label: 'Financials' },
@@ -34,7 +35,7 @@ const TABS = [
 ] as const
 
 const SECTION_TABS: Record<string, SectionCode> = {
-  banking: 'BANKING', gst: 'GST', bureau: 'BUREAU', financials: 'FINANCIALS',
+  banking: 'BANKING', itr: 'ITR', gst: 'GST', bureau: 'BUREAU', financials: 'FINANCIALS',
   business: 'BUSINESS', stock: 'STOCK', collateral: 'COLLATERAL',
 }
 
@@ -60,6 +61,13 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
   const pillars = assessment?.assessment_pillars ?? []
   const sections = buildSections(lead, docs)
   const signals = buildSignals(sections, lead)
+
+  // Only the active section tab's own AI summary is ever needed on a given
+  // page render — no point fetching all eight.
+  const activeSectionCode = SECTION_TABS[activeTab]
+  const { data: activeSummary } = activeSectionCode
+    ? await supabase.from('section_summaries').select('*').eq('lead_id', leadId).eq('section_code', activeSectionCode).maybeSingle<SectionSummary>()
+    : { data: null }
 
   const requiredDocTypes = [...new Set((catalogueProducts ?? []).flatMap((p) => p.required_documents ?? []))]
 
@@ -144,6 +152,7 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
           section={sections.find((s) => s.key === SECTION_TABS[activeTab])!}
           basePath={basePath}
           leadId={leadId}
+          summary={activeSummary}
         />
       )}
 
