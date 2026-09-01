@@ -30,9 +30,10 @@ const requiredMark = <span className="ml-0.5 text-[#b42318]">*</span>
 
 // Reuses the New lead modal's exact visual language (see NewLeadModal.tsx,
 // matched to the prototype) but asks only for Product + Amount — identity
-// fields already live on the Applicant and aren't re-entered. Reached only
-// from that Applicant's own row on the Dashboard, never auto-triggered.
-export function NewApplicationModal({ applicantId, applicantName }: { applicantId: string; applicantName: string }) {
+// fields already live on the Applicant and aren't re-entered. Reached from
+// the Applicant's own row on the Dashboard, the Applicants list, or their
+// own detail page — closeHref sends it back to wherever that actually was.
+export function NewApplicationModal({ applicantId, applicantName, closeHref }: { applicantId: string; applicantName: string; closeHref: string }) {
   const [product, setProduct] = useState<LoanType>('PL')
   const [amount, setAmount] = useState('')
 
@@ -61,7 +62,7 @@ export function NewApplicationModal({ applicantId, applicantName }: { applicantI
             </div>
           </div>
           <Link
-            href="/partner"
+            href={closeHref}
             aria-label="Close"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#7c7a75] hover:bg-[#e3e2de] hover:text-[#47453f]"
           >

@@ -23,15 +23,37 @@ export type Band = 'STRONG' | 'GOOD' | 'MODERATE' | 'WEAK' | 'CRITICAL'
 export type Verdict = 'PASS' | 'REFER' | 'DECLINE'
 export type PillarCode = 'BANKING' | 'BUREAU' | 'COLLATERAL' | 'GST'
 
+export type ApplicantEntityType = 'INDIVIDUAL' | 'COMPANY'
+
 export interface Applicant {
   id: string
   agent_id: string
+  /** Holds the company name when entity_type is COMPANY. */
   client_name: string
   phone: string
   email: string | null
   residence_address: string | null
+  pincode: string | null
+  /** Identity attribute of the person, not any one loan — see
+   *  /decisions/2026-08-31-lendstream-dsa-hub-applicant-application-relation.md. */
+  pan_number: string | null
+  entity_type: ApplicantEntityType
   created_at: string
   updated_at: string
+}
+
+/**
+ * Company/Contact association — HubSpot style (see
+ * /decisions/2026-08-31-lendstream-dsa-hub-company-key-personnel.md). A key
+ * person IS a full individual Applicant of their own (`linked_applicant_id`);
+ * this row only carries the association and their role at the company.
+ */
+export interface KeyPersonnel {
+  id: string
+  company_applicant_id: string
+  linked_applicant_id: string
+  designation: string | null
+  created_at: string
 }
 
 export interface Lead {
@@ -141,6 +163,9 @@ export interface LenderProduct {
   turnaround_days: number | null
   /** Free-text credit-box note shown against the offer, e.g. security preference. */
   credit_box_note: string | null
+  /** This lender's own document requirements — on top of, not instead of,
+   *  the product family's baseline `products.required_documents`. */
+  required_documents: DocumentType[]
   created_at: string
 }
 

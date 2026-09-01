@@ -19,5 +19,5 @@ export default async function NewApplicationPage({ params }: { params: Promise<{
     redirect('/partner')
   }
 
-  return <NewApplicationModal applicantId={applicant.id} applicantName={applicant.client_name} />
+  return <NewApplicationModal applicantId={applicant.id} applicantName={applicant.client_name} closeHref={`/partner/applicants/${applicant.id}`} />
 }

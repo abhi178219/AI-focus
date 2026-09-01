@@ -4,12 +4,16 @@ import { useActionState } from 'react'
 import { useRouter } from 'next/navigation'
 import { addLenderProduct } from '@/app/actions/lenderProducts'
 import type { Product } from '@/lib/types'
+import { DOC_CATEGORIES, DOC_TYPE_LABEL } from '@/lib/documentCategories'
 
 type State = { error?: string; saved?: boolean }
 
 const inputClass = 'w-full rounded-lg border border-[#dcdbd6] bg-white px-3 py-2 text-[13px] focus:border-[#16161a] focus:outline-none'
 
-export function AddLenderProductForm({ products, canEdit }: { products: Product[]; canEdit: boolean }) {
+// Catalogue writes are open to any signed-in user, matching the prototype
+// (see /decisions/2026-08-31-lendstream-dsa-hub-open-catalogue-writes.md,
+// which supersedes the earlier ops-only restriction).
+export function AddLenderProductForm({ products }: { products: Product[] }) {
   const router = useRouter()
 
   async function action(_prev: State, formData: FormData): Promise<State> {
@@ -19,14 +23,6 @@ export function AddLenderProductForm({ products, canEdit }: { products: Product[
     return { saved: true }
   }
   const [state, formAction, pending] = useActionState<State, FormData>(action, {})
-
-  if (!canEdit) {
-    return (
-      <p className="rounded-[20px] bg-[#efeeeb] p-4 text-[12px] text-[#7c7a75]">
-        Only ops admins can add lender products. Ask your ops team to add a lender option, and it will appear here for everyone.
-      </p>
-    )
-  }
 
   return (
     <form action={formAction} className="rounded-[20px] bg-[#efeeeb] p-4">
@@ -52,6 +48,18 @@ export function AddLenderProductForm({ products, canEdit }: { products: Product[
         <Field label="Processing fee (%)"><input name="processing_fee_percent" type="number" step="0.05" defaultValue={1} className={inputClass} /></Field>
         <Field label="Turnaround (days)"><input name="turnaround_days" type="number" min="1" placeholder="14" className={inputClass} /></Field>
         <Field label="Credit-box note"><input name="credit_box_note" placeholder="Prefers self-occupied residential security" className={inputClass} /></Field>
+
+        <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+          <label className="mb-1 block text-[10.5px] font-medium text-[#7c7a75]">Documents required</label>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 rounded-lg border border-[#dcdbd6] bg-white px-3 py-2.5">
+            {DOC_CATEGORIES.flatMap((cat) => cat.types).map((t) => (
+              <label key={t} className="inline-flex items-center gap-1.5 text-[12px] text-[#47453f]">
+                <input type="checkbox" name="required_documents" value={t} className="h-3.5 w-3.5 rounded border-[#dcdbd6] accent-[#1a1917]" />
+                {DOC_TYPE_LABEL[t]}
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="mt-3 flex items-center gap-3">

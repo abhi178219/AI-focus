@@ -4,21 +4,16 @@ import { Card, CardHead, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/shared/Badge'
 import { AddLenderProductForm } from '@/components/shared/AddLenderProductForm'
 import { fmtAmount } from '@/lib/format'
+import { DOC_TYPE_LABEL } from '@/lib/documentCategories'
 import type { Product, LenderProduct } from '@/lib/types'
 
 export async function ProductsWorkspace({ view, basePath }: { view: string; basePath: string }) {
   const supabase = await createClient()
 
-  const [{ data: products }, { data: lenderProducts }, { data: { user } }] = await Promise.all([
+  const [{ data: products }, { data: lenderProducts }] = await Promise.all([
     supabase.from('products').select('*').order('category').returns<Product[]>(),
     supabase.from('lender_products').select('*').order('interest_rate').returns<LenderProduct[]>(),
-    supabase.auth.getUser(),
   ])
-
-  const { data: profile } = user
-    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
-    : { data: null }
-  const canEdit = profile?.role === 'ops_admin'
 
   const families = products ?? []
   const options = lenderProducts ?? []
@@ -143,6 +138,15 @@ export async function ProductsWorkspace({ view, basePath }: { view: string; base
                             <span className="mr-2 inline-block rounded-md bg-white px-1.5 py-0.5 text-[10px] font-bold text-[#47453f]">{o.short_code}</span>
                             <span className="font-semibold text-[#16161a]">{o.display_name}</span>
                             {o.credit_box_note && <p className="mt-0.5 text-[10.5px] text-[#7c7a75]">{o.credit_box_note}</p>}
+                            {o.required_documents?.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {o.required_documents.map((d) => (
+                                  <span key={d} className="rounded-full bg-white px-2 py-0.5 text-[10px] text-[#5f5d58]">
+                                    {DOC_TYPE_LABEL[d] ?? d}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-2.5 text-[#5f5d58]">{o.lender_name}</td>
                           <td className="px-4 py-2.5 font-semibold text-[#16161a] tnum">{Number(o.interest_rate).toFixed(2)}%</td>
@@ -168,7 +172,7 @@ export async function ProductsWorkspace({ view, basePath }: { view: string; base
                 <p className="text-[10px] font-medium uppercase tracking-wide text-[#7c7a75]">Catalogue management</p>
                 <p className="mb-2 text-[12.5px] font-semibold text-[#16161a]">Add a new product</p>
                 <p className="mb-3 text-[11px] text-[#7c7a75]">Create a lender-specific option for the team to use in offers and calculators.</p>
-                <AddLenderProductForm products={families} canEdit={canEdit} />
+                <AddLenderProductForm products={families} />
               </div>
             </>
           )}

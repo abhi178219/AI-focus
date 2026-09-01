@@ -3,6 +3,9 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { DOC_TYPE_LABEL } from '@/lib/documentCategories'
+
+const VALID_DOCUMENT_TYPES = new Set(Object.keys(DOC_TYPE_LABEL))
 
 function num(v: FormDataEntryValue | null): number | null {
   const s = String(v ?? '').trim()
@@ -28,6 +31,9 @@ export async function addLenderProduct(formData: FormData) {
     processing_fee_percent: num(formData.get('processing_fee_percent')) ?? 1,
     turnaround_days: num(formData.get('turnaround_days')),
     credit_box_note: String(formData.get('credit_box_note') ?? '').trim() || null,
+    // Whitelist against the same document-type set the upload form uses,
+    // rather than trusting whatever checkbox values a submitted form carries.
+    required_documents: formData.getAll('required_documents').map(String).filter((t) => VALID_DOCUMENT_TYPES.has(t)),
     created_by: user.id,
   }
 
@@ -40,12 +46,14 @@ export async function addLenderProduct(formData: FormData) {
   if (payload.max_tenure_years < payload.min_tenure_years) return { error: 'Maximum tenure cannot be less than the minimum.' }
   if (!payload.short_code) payload.short_code = payload.display_name.slice(0, 6).toUpperCase()
 
-  // RLS restricts writes to ops admins; a partner gets zero rows back rather
-  // than an error, so check the row count, not just `error`.
+  // Catalogue writes are open to any signed-in user (see
+  // /decisions/2026-08-31-lendstream-dsa-hub-open-catalogue-writes.md), but
+  // RLS filters rather than errors, so still check the row count rather than
+  // trusting the absence of `error` alone.
   const { data, error } = await supabase.from('lender_products').insert(payload).select('id')
   if (error) return { error: error.message }
   if (!data || data.length === 0) {
-    return { error: 'Could not add — only ops admins can change the product catalogue.' }
+    return { error: "Could not add — you don't have access to change the product catalogue." }
   }
 
   revalidatePath('/partner/products')
@@ -65,7 +73,7 @@ export async function toggleLenderProduct(id: string, isActive: boolean) {
 
   if (error) return { error: error.message }
   if (!data || data.length === 0) {
-    return { error: 'Could not update — only ops admins can change the product catalogue.' }
+    return { error: "Could not update — you don't have access to change the product catalogue." }
   }
 
   revalidatePath('/partner/products')

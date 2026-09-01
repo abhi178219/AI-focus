@@ -355,72 +355,34 @@ export default async function PartnerDashboard() {
           <CardHead
             title="Applicants"
             sub="Each customer, with every loan application they've asked for underneath"
+            right={<Link href="/partner/applicants" className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2440e8] hover:underline">See all <ArrowRight size={12} /></Link>}
           />
-          <div className="max-h-[520px] divide-y divide-[#e7e6e2] overflow-y-auto">
+          {/* Full searchable list lives at /partner/applicants — this is a
+              preview only, so it stays fast to scan once there are many. */}
+          <div className="divide-y divide-[#e7e6e2]">
             {applicants.length === 0 && (
               <p className="px-6 py-8 text-center text-[13px] text-[#a8a6a0]">No applicants yet.</p>
             )}
-            {applicants.map((applicant) => {
-              const apps = [...(applicationsByApplicant.get(applicant.id) ?? [])]
-                .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
-              // A regular partner only ever sees their own Applicants (RLS),
-              // so this badge would always just say "you" — noise. It only
-              // earns its place for ops, who sees every partner's book here
-              // and needs to tell two identically-named rows apart.
-              const isOwnApplicant = applicant.agent_id === user?.id
+            {applicants.slice(0, 5).map((applicant) => {
+              const apps = applicationsByApplicant.get(applicant.id) ?? []
               return (
-                <div key={applicant.id} className="px-6 py-4">
-                  <div className="flex items-center gap-4">
-                    <Avatar name={applicant.client_name} size={38} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-[#16161a]">{applicant.client_name}</p>
-                      <p className="truncate text-[11px] text-[#7c7a75]">{applicant.phone}{applicant.email ? ` · ${applicant.email}` : ''}</p>
-                    </div>
-                    {!isOwnApplicant && (
-                      <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-medium text-[#7c7a75]">
-                        {nameByAgent.get(applicant.agent_id) ?? `${applicant.agent_id.slice(0, 8)}…`}'s
-                      </span>
-                    )}
-                    <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-semibold text-[#5f5d58] tnum">
-                      {apps.length} application{apps.length === 1 ? '' : 's'}
-                    </span>
-                    {/* Only the Applicant's own agent can actually add an Application here —
-                        leads_insert_own requires agent_id = auth.uid(), so an ops viewer
-                        hitting this on a partner's Applicant would only reach a dead-end
-                        RLS error after filling the whole form. Hide it instead. */}
-                    {isOwnApplicant && (
-                      <Link
-                        href={`/partner/applicants/${applicant.id}/application/new`}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#efeeeb] px-3 py-1.5 text-[11px] font-semibold text-[#47453f] hover:bg-[#e3e2de]"
-                      >
-                        <Plus size={11} strokeWidth={3} /> New application
-                      </Link>
-                    )}
+                <Link
+                  key={applicant.id}
+                  href={`/partner/applicants/${applicant.id}`}
+                  className="flex items-center gap-4 px-6 py-3.5 hover:bg-[#efeeeb]"
+                >
+                  <Avatar name={applicant.client_name} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-[#16161a]">{applicant.client_name}</p>
+                    <p className="truncate text-[11px] text-[#7c7a75]">
+                      {applicant.phone}{applicant.email ? ` · ${applicant.email}` : ''}
+                      {applicant.agent_id !== user?.id && ` · ${nameByAgent.get(applicant.agent_id) ?? 'another partner'}'s file`}
+                    </p>
                   </div>
-
-                  <div className="ml-[54px] mt-2.5 space-y-1.5">
-                    {apps.map((l) => {
-                      const a = latestByLead.get(l.id)
-                      return (
-                        <Link
-                          key={l.id}
-                          href={`/partner/leads/${l.id}`}
-                          className="flex items-center gap-3 rounded-[14px] bg-[#efeeeb] px-3.5 py-2.5 hover:bg-[#e3e2de]"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#16161a]">
-                            {LOAN_TYPE_LABEL[l.loan_type] ?? l.loan_type}
-                          </span>
-                          <span className="shrink-0 rounded-full bg-[#f7f6f4] px-2 py-0.5 text-[10.5px] font-medium text-[#5f5d58]">
-                            {STAGE_LABELS[l.stage]}
-                          </span>
-                          {a && <Badge className={VERDICT_STYLES[a.verdict]}>{a.verdict}</Badge>}
-                          <span className="shrink-0 text-[12px] font-bold text-[#16161a] tnum">{fmtAmount(Number(l.requested_amount))}</span>
-                        </Link>
-                      )
-                    })}
-                    {apps.length === 0 && <p className="text-[11px] text-[#a8a6a0]">No applications on file.</p>}
-                  </div>
-                </div>
+                  <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-semibold text-[#5f5d58] tnum">
+                    {apps.length} application{apps.length === 1 ? '' : 's'}
+                  </span>
+                </Link>
               )
             })}
           </div>
