@@ -186,14 +186,27 @@ export async function updateLeadStage(leadId: string, stage: LeadStage, note?: s
   return {}
 }
 
+const INTERACTION_CATEGORIES = new Set(['CUSTOMER', 'INTERNAL', 'BANK'])
+
+/**
+ * Logs one interaction under whichever of the three Activity sub-tabs the
+ * form was on. `category` picks the tab; `party` means the internal team
+ * (Sales/BM/Ops/Management) for INTERNAL, the bank/lender name for BANK, and
+ * is unused for CUSTOMER — the UI only ever sends the field that applies.
+ */
 export async function addInteraction(leadId: string, formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  const categoryRaw = String(formData.get('category') ?? 'CUSTOMER')
+  const category = INTERACTION_CATEGORIES.has(categoryRaw) ? categoryRaw : 'CUSTOMER'
+
   const { error } = await supabase.from('interactions').insert({
     lead_id: leadId,
     agent_id: user.id,
+    category,
+    party: String(formData.get('party') ?? '').trim() || null,
     channel: String(formData.get('channel') ?? 'CALL'),
     outcome: String(formData.get('outcome') ?? '').trim() || null,
     note: String(formData.get('note') ?? '').trim() || null,

@@ -25,6 +25,27 @@ export const GST_POLICY = {
   volatilityCriticalPercent: 60,
   concentrationWarnPercent: 40,
   concentrationCriticalPercent: 60,
+  /**
+   * A GSTIN younger than this reads as limited business vintage regardless of
+   * how long the applicant says the business has been trading.
+   */
+  minRegistrationVintageMonths: 12,
+  /**
+   * GSTR-1 against GSTR-3B outward supplies. Below the first figure the
+   * difference is normally explainable (amendments, credit notes, timing);
+   * above the second it is a material unexplained gap.
+   */
+  gstr1VsGstr3bTolerancePercent: 5,
+  gstr1VsGstr3bCriticalPercent: 15,
+  /** ITC claimed against the GSTR-2B auto-populated figure. */
+  itcMismatchTolerancePercent: 10,
+  /** Credit notes / sales reversals as a share of outward supplies. */
+  creditNoteWarnPercent: 5,
+  creditNoteCriticalPercent: 10,
+  /** Share of GST liability discharged in cash — below this reads as ITC-heavy. */
+  cashTaxShareWarnPercent: 10,
+  /** Turnover step-up in the periods immediately before the application. */
+  suddenStepUpPercent: 50,
   /** Unsecured-programme sanction caps by turnover band. */
   caps: [
     { upTo: 3_00_00_000, cap: 25_00_000 },

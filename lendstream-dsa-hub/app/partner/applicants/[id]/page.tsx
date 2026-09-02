@@ -7,9 +7,35 @@ import { Avatar } from '@/components/shared/Avatar'
 import { fmtAmount } from '@/lib/format'
 import { ApplicantIdentityCard } from '@/components/shared/ApplicantIdentityCard'
 import { KeyPersonnelList } from '@/components/shared/KeyPersonnelList'
-import { LOAN_TYPE_LABEL, STAGE_LABELS, VERDICT_STYLES, type Applicant, type KeyPersonnel, type Lead } from '@/lib/types'
+import { AttributionCard } from '@/components/shared/AttributionCard'
+import { ConsentCenterCard } from '@/components/shared/ConsentCenterCard'
+import { ApplicantDocumentVault } from '@/components/shared/ApplicantDocumentVault'
+import { RelationshipActivityCard } from '@/components/shared/RelationshipActivityCard'
+import { RelationshipSnapshotCard, type RelationshipSnapshot } from '@/components/shared/RelationshipSnapshotCard'
+import {
+  LOAN_TYPE_LABEL, STAGE_LABELS, STAGE_PILL_STYLES, VERDICT_STYLES,
+  type Applicant, type ApplicantConsent, type ApplicantDocument, type ApplicantInteraction,
+  type ConsentType, type KeyPersonnel, type Lead,
+} from '@/lib/types'
 
 const CLOSED_STAGES = new Set(['DISBURSED', 'DROPPED'])
+
+/**
+ * Relationship tenure, from the earliest application on file to today.
+ * "New relationship" is reserved for a genuinely new file — exactly one
+ * application, created within the last 30 days — rather than being implied by
+ * a small number.
+ */
+function relationshipTenure(earliestCreatedAt: string, applicationCount: number): string {
+  const days = Math.floor((Date.now() - new Date(earliestCreatedAt).getTime()) / 86400000)
+  if (applicationCount === 1 && days < 30) return 'New relationship'
+  const months = Math.floor(days / 30.4375)
+  if (months < 1) return 'Under 1 mo'
+  if (months < 12) return `${months} mo`
+  const years = Math.floor(months / 12)
+  const rest = months % 12
+  return rest === 0 ? `${years} yr` : `${years} yr ${rest} mo`
+}
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
@@ -31,7 +57,10 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
   const isCompany = applicant.entity_type === 'COMPANY'
   const isOwn = applicant.agent_id === user.id
 
-  const [{ data: leads }, { data: rm }, { data: keyPersonnelRows }, { data: parentCompanyLink }] = await Promise.all([
+  const [
+    { data: leads }, { data: rm }, { data: keyPersonnelRows }, { data: parentCompanyLink },
+    { data: consentRows }, { data: vaultDocuments }, { data: relationshipInteractions },
+  ] = await Promise.all([
     supabase.from('leads').select('*').eq('applicant_id', id).returns<Lead[]>(),
     supabase.from('profiles').select('full_name, email, phone, region').eq('id', applicant.agent_id).single(),
     // Only a company ever has key personnel underneath it.
@@ -40,8 +69,39 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
       : Promise.resolve({ data: [] as KeyPersonnel[] }),
     // Reverse lookup: is THIS applicant a key person of some company?
     supabase.from('key_personnel').select('designation, company_applicant_id').eq('linked_applicant_id', id).maybeSingle(),
+    // Consent history is append-only, so "current" is simply the newest row per
+    // type — fetch the lot newest-first and take the first of each in JS rather
+    // than reaching for a window function.
+    supabase.from('applicant_consents').select('*').eq('applicant_id', id)
+      .order('captured_at', { ascending: false }).returns<ApplicantConsent[]>(),
+    supabase.from('applicant_documents').select('*').eq('applicant_id', id)
+      .order('uploaded_at', { ascending: false }).returns<ApplicantDocument[]>(),
+    supabase.from('applicant_interactions').select('*').eq('applicant_id', id)
+      .order('occurred_at', { ascending: false }).returns<ApplicantInteraction[]>(),
   ])
   const apps = [...(leads ?? [])].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+
+  const latestConsentByType: Partial<Record<ConsentType, ApplicantConsent>> = {}
+  for (const c of consentRows ?? []) if (!latestConsentByType[c.consent_type]) latestConsentByType[c.consent_type] = c
+
+  // Relationship snapshot — every figure below comes from this applicant's own
+  // `leads` rows, already fetched above. Nothing is estimated or modelled.
+  const snapshot: RelationshipSnapshot = {
+    // Real money out where we know it (disbursed), the ask where we don't.
+    // Dropped applications are excluded — they represent no exposure at all.
+    activeExposure: apps
+      .filter((l) => l.stage !== 'DROPPED')
+      .reduce((sum, l) => sum + Number(l.disbursed_amount ?? l.requested_amount ?? 0), 0),
+    // The most recent application only. `existing_emis` is the applicant's
+    // declaration of their OTHER obligations at that point in time — summing it
+    // across applications would count the same external debt once per file.
+    existingEmi: apps.length ? Number(apps[0].existing_emis ?? 0) : null,
+    // `apps` is newest-first, so the earliest application is the last element.
+    tenureLabel: apps.length ? relationshipTenure(apps[apps.length - 1].created_at, apps.length) : null,
+    wonCount: apps.filter((l) => l.stage === 'DISBURSED').length,
+    droppedCount: apps.filter((l) => l.stage === 'DROPPED').length,
+    activeCount: apps.filter((l) => l.stage !== 'DISBURSED' && l.stage !== 'DROPPED').length,
+  }
 
   const leadIds = apps.map((l) => l.id)
   const { data: assessments } = leadIds.length
@@ -145,6 +205,26 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
         </Card>
       </div>
 
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <RelationshipSnapshotCard snapshot={snapshot} />
+        </div>
+        <AttributionCard applicant={applicant} isOwn={isOwn} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ConsentCenterCard applicantId={applicant.id} latestByType={latestConsentByType} isOwn={isOwn} />
+        <ApplicantDocumentVault applicantId={applicant.id} documents={vaultDocuments ?? []} isOwn={isOwn} />
+      </div>
+
+      <div className="mt-4">
+        <RelationshipActivityCard
+          applicantId={applicant.id}
+          interactions={relationshipInteractions ?? []}
+          isOwn={isOwn}
+        />
+      </div>
+
       {isCompany && (
         <div className="mt-4">
           <Card>
@@ -212,7 +292,9 @@ function ApplicationList({
               <p className="truncate text-[13px] font-semibold text-[#16161a]">{LOAN_TYPE_LABEL[l.loan_type] ?? l.loan_type}</p>
               <p className="truncate text-[11px] text-[#7c7a75]">lead-{l.id.slice(0, 6)} · {ageDays}d ago</p>
             </div>
-            <span className="shrink-0 rounded-full bg-[#efeeeb] px-2.5 py-1 text-[11px] font-medium text-[#47453f]">
+            {/* Stage-coloured pill, exactly as LeadHeader/LeadsTable render it —
+                same class idiom, so a Sanctioned file reads the same everywhere. */}
+            <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${STAGE_PILL_STYLES[l.stage]}`}>
               {STAGE_LABELS[l.stage]}
             </span>
             {a ? (

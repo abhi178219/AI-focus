@@ -76,7 +76,7 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
   // interaction — profiles are read separately because RLS scopes them.
   const catalogueProductIds = (catalogueProducts ?? []).map((p) => p.id as string)
   const interactionRows = (interactions ?? []) as {
-    id: string; channel: string; outcome: string | null; note: string | null
+    id: string; channel: string; category: string; party: string | null; outcome: string | null; note: string | null
     occurred_at: string; next_follow_up: string | null; agent_id: string
   }[]
   const actorIds = [...new Set([...interactionRows.map((i) => i.agent_id), lead.agent_id])].filter(Boolean)
@@ -94,12 +94,18 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
   const activityRows: ActivityRow[] = interactionRows.map((i) => ({
     id: i.id,
     channel: i.channel,
+    category: i.category,
+    party: i.party,
     outcome: i.outcome,
     note: i.note,
     occurred_at: i.occurred_at,
     next_follow_up: i.next_follow_up,
     by: nameById.get(i.agent_id) ?? null,
   }))
+  // Bank tab's party field gets a datalist of lenders already in this app's
+  // catalogue for this product family, so logging a bank interaction doesn't
+  // start from a blank text box every time.
+  const bankNames = [...new Set((lenderProductRows ?? []).map((p) => p.lender_name))].sort()
 
   // Tab dots mirror the prototype: a pillar's band shows as a coloured dot on its tab.
   const bandByTab: Record<string, Band | null> = {}
@@ -192,6 +198,7 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
           lead={lead}
           interactions={activityRows}
           ownerName={nameById.get(lead.agent_id) ?? null}
+          bankNames={bankNames}
         />
       )}
     </div>

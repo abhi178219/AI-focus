@@ -238,6 +238,27 @@ function stddev(xs: number[]): number | null {
   const m = mean(xs)!
   return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / xs.length)
 }
+function sumOf(xs: number[]): number | null {
+  return xs.length ? xs.reduce((s, x) => s + x, 0) : null
+}
+/** Parses the date formats Indian documents actually state, DD/MM/YYYY included. */
+function parseDateish(v: string | null): Date | null {
+  if (!v) return null
+  const dmy = v.trim().match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/)
+  if (dmy) {
+    const dt = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]))
+    return Number.isFinite(dt.getTime()) ? dt : null
+  }
+  const t = Date.parse(v)
+  return Number.isFinite(t) ? new Date(t) : null
+}
+/** Whole months between a stated date and today — null for a future date. */
+function monthsSince(d: Date | null): number | null {
+  if (!d) return null
+  const now = new Date()
+  const m = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth())
+  return m >= 0 ? m : null
+}
 /** Sparse axis captions — first, middle and last point, as the prototype shows. */
 function sparseAxis(labels: (string | null)[]): string[] {
   const clean = labels.map((l, i) => l ?? `M${i + 1}`)
@@ -1138,23 +1159,95 @@ function itr(lead: Lead, documents: DocumentRow[]): SectionView {
 
 /* --------------------------------------------------------------------- GST */
 
+/**
+ * One return period off the upload — the GSTR-1 and the GSTR-3B for the same
+ * month or quarter. The period is the unit, the same way an assessment year is
+ * the unit of an ITR set: the GSTR-1-vs-GSTR-3B reconciliation, the
+ * seasonality read and the filing-regularity read are all derived from it.
+ */
+interface GstPeriod {
+  label: string
+  gstr1: number | null
+  gstr3b: number | null
+  /** The figure the trend, the annual total and the volatility read run off. */
+  value: number | null
+  taxPaidCash: number | null
+  itcClaimed: number | null
+  filedOnTime: boolean | null
+  nilReturn: boolean
+}
+
+function gstPeriod(o: Record<string, unknown>, fallbackLabel: string): GstPeriod {
+  const gstr1 = num(o.gstr1_taxable_value)
+  const gstr3b = num(o.gstr3b_taxable_value)
+  const stated = num(o.taxable_value)
+  // 3B is what was actually declared and paid on; prefer it, then whatever the
+  // period stated as its headline figure, then the GSTR-1 outward supplies.
+  const value = gstr3b ?? stated ?? gstr1
+  return {
+    label: str(o.month) ?? fallbackLabel,
+    gstr1, gstr3b, value,
+    taxPaidCash: num(o.tax_paid_cash),
+    itcClaimed: num(o.itc_claimed),
+    filedOnTime: bool(o.filed_on_time),
+    nilReturn: bool(o.nil_return) === true || value === 0,
+  }
+}
+
+const GST_CONSTITUTION_LABEL: Record<string, string> = {
+  PROPRIETORSHIP: 'Proprietorship', PARTNERSHIP: 'Partnership', LLP: 'LLP',
+  PRIVATE_LIMITED: 'Private limited company', PUBLIC_LIMITED: 'Public limited company',
+  HUF: 'HUF', TRUST: 'Trust', SOCIETY: 'Society',
+}
+
 function gst(lead: Lead, documents: DocumentRow[]): SectionView {
   const found = docOf(documents, 'GST_RETURNS')
   const src = found ?? EMPTY_SOURCE
   const hasSource = found !== null
+  const d = src.data
 
-  const gstin = str(src.data.gstin)
-  const filingMonth = str(src.data.filing_month)
-  const filingFrequency = str(src.data.filing_frequency)
-  const businessType = str(src.data.business_type)?.toUpperCase().replace(/\s+/g, '_') ?? null
+  /* ---- 1. GST registration and business identity ------------------------ */
+  const gstin = str(d.gstin)
+  const status = str(d.gstin_status)?.toUpperCase().replace(/\s+/g, '_') ?? null
+  const suspensionNote = str(d.gstin_cancelled_or_suspended_note)
+  // A free-text cancellation/suspension note counts even when the enum field
+  // itself came back empty — the document said it either way.
+  const inactive = status === 'CANCELLED' || status === 'SUSPENDED' || suspensionNote !== null
+  const statusLabel = status ? titleCase(status) : suspensionNote ? 'Flagged on the return set' : null
+  const statusBand: Band | null = inactive ? 'CRITICAL' : status === 'ACTIVE' ? 'STRONG' : null
 
-  const monthly = arr(src.data.monthly_turnover)
-  const monthlyValues = monthly.map((m) => num(m.taxable_value))
-  const present = monthlyValues.filter((v): v is number => v !== null)
-  const summed = present.length ? present.reduce((s, v) => s + v, 0) : null
-  // Prefer a stated annual turnover; otherwise sum the periods we actually have.
-  const turnover = num(src.data.turnover) ?? summed
-  const priorYear = num(src.data.prior_year_turnover)
+  const legalName = str(d.legal_name)
+  const tradeName = str(d.trade_name)
+  const constitutionRaw = str(d.constitution)?.toUpperCase().replace(/\s+/g, '_') ?? null
+  const constitution = constitutionRaw
+    ? GST_CONSTITUTION_LABEL[constitutionRaw] ?? titleCase(constitutionRaw) : null
+  const placeOfBusiness = str(d.principal_place_of_business)
+  const registrationDate = str(d.registration_date)
+  const vintageMonths = monthsSince(parseDateish(registrationDate))
+  const shortVintage = vintageMonths !== null && vintageMonths < GST_POLICY.minRegistrationVintageMonths
+  const vintageBand: Band | null = vintageMonths === null ? null
+    : shortVintage ? 'WEAK'
+    : vintageMonths < 24 ? 'MODERATE' : vintageMonths < 36 ? 'GOOD' : 'STRONG'
+  const vintageText = vintageMonths === null ? null
+    : vintageMonths < 24 ? `${vintageMonths} month${vintageMonths === 1 ? '' : 's'}`
+    : `${(vintageMonths / 12).toFixed(1)} years`
+  const extraRegistrations = num(d.additional_registrations_count)
+
+  const filingMonth = str(d.filing_month)
+  const filingFrequency = str(d.filing_frequency)?.toUpperCase().replace(/\s+/g, '_') ?? null
+  const composition = filingFrequency === 'COMPOSITION'
+  const businessType = str(d.business_type)?.toUpperCase().replace(/\s+/g, '_') ?? null
+
+  /* ---- 2. GSTR-1 turnover and mix --------------------------------------- */
+  const periodRows = arr(d.monthly_turnover)
+  const periods: GstPeriod[] = periodRows.map((p, i) => gstPeriod(p, `M${i + 1}`))
+  const periodValues = periods.map((p) => p.value)
+  const present = periodValues.filter((v): v is number => v !== null)
+  const summed = sumOf(present)
+  // Prefer a stated annual turnover; otherwise sum the periods we actually
+  // have. This is the field lib/decision/rulesEngine.ts reads directly.
+  const turnover = num(d.turnover) ?? summed
+  const priorYear = num(d.prior_year_turnover)
   const avgMonthly = mean(present)
   const sd = stddev(present)
   const volatility = sd !== null && avgMonthly ? (sd / avgMonthly) * 100 : null
@@ -1162,25 +1255,153 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
   const yoy = turnover !== null && priorYear !== null && priorYear > 0
     ? ((turnover - priorYear) / priorYear) * 100 : null
 
-  const returnsDue = num(src.data.returns_due)
-  const returnsFiled = num(src.data.returns_filed)
-  const lateFilings = num(src.data.late_filings)
-  const missed = returnsDue !== null && returnsFiled !== null ? Math.max(0, returnsDue - returnsFiled) : null
-  const filingCompliance = returnsDue !== null && returnsFiled !== null && returnsDue > 0
-    ? (returnsFiled / returnsDue) * 100 : null
-  const onTime = returnsFiled !== null && lateFilings !== null && returnsFiled > 0
-    ? ((returnsFiled - lateFilings) / returnsFiled) * 100 : null
+  // The pattern that matters is not growth but growth that arrives only in the
+  // months before the application — the same read itr() takes on income steps.
+  const recentMean = mean(present.slice(-3))
+  const earlierMean = mean(present.slice(0, -3))
+  const stepUpPercent = recentMean !== null && earlierMean !== null && earlierMean > 0
+    ? ((recentMean - earlierMean) / earlierMean) * 100 : null
+  const suddenStepUp = present.length >= 6 && stepUpPercent !== null
+    && stepUpPercent >= GST_POLICY.suddenStepUpPercent
+  // With no period series to read, a doubling against last year is the only
+  // step-up evidence on file.
+  const suddenYoy = stepUpPercent === null && yoy !== null
+    && yoy >= GST_POLICY.suddenStepUpPercent * 1.5
 
-  const taxPaid = num(src.data.tax_paid)
-  const itcClaimed = num(src.data.itc_claimed)
-  const effectiveTaxRate = taxPaid !== null && turnover ? (taxPaid / turnover) * 100 : null
+  const b2b = num(d.b2b_turnover)
+  const b2c = num(d.b2c_turnover)
+  const exports = num(d.export_turnover)
+  const interstate = num(d.interstate_turnover)
+  const creditNotes = num(d.credit_notes_value)
+  const mixBase = sumOf([b2b, b2c].filter((v): v is number => v !== null)) ?? turnover
+  const shareOf = (v: number | null) => v !== null && mixBase ? (v / mixBase) * 100 : null
+  const b2bShare = shareOf(b2b)
+  const b2cShare = shareOf(b2c)
+  const exportShare = shareOf(exports)
+  const interstateShare = shareOf(interstate)
+  const creditNoteRatio = creditNotes !== null && mixBase ? (creditNotes / mixBase) * 100 : null
+  const creditNoteBand: Band | null = creditNoteRatio === null ? null
+    : creditNoteRatio <= 2 ? 'STRONG'
+    : creditNoteRatio <= GST_POLICY.creditNoteWarnPercent ? 'GOOD'
+    : creditNoteRatio <= GST_POLICY.creditNoteCriticalPercent ? 'MODERATE' : 'WEAK'
+  // Both extremes carry a cost: a wholly B2B book depends on corporate payment
+  // behaviour, a wholly B2C one is cash-collected and harder to verify.
+  const mixBand: Band | null = b2bShare === null && b2cShare === null ? null
+    : (b2bShare ?? 0) >= 90 || (b2cShare ?? 0) >= 80 ? 'MODERATE' : 'GOOD'
 
-  const topOne = num(src.data.top_counterparty_percent)
-  const topFive = num(src.data.top_five_counterparty_percent)
+  const topOne = num(d.top_counterparty_percent)
+  const topFive = num(d.top_five_counterparty_percent)
   const concentration: Band | null = topOne === null ? null
     : topOne >= GST_POLICY.concentrationCriticalPercent ? 'CRITICAL'
     : topOne >= GST_POLICY.concentrationWarnPercent ? 'WEAK'
     : topOne >= 25 ? 'MODERATE' : 'STRONG'
+
+  /* ---- 3. GSTR-3B turnover and tax payment ------------------------------ */
+  const gstr3bTotal = sumOf(periods.map((p) => p.gstr3b).filter((v): v is number => v !== null))
+  const gstr1Total = sumOf(periods.map((p) => p.gstr1).filter((v): v is number => v !== null))
+  const reportedTurnover = gstr3bTotal ?? turnover
+  const liability = num(d.gst_liability)
+  const taxPaidCash = num(d.tax_paid_cash)
+    ?? sumOf(periods.map((p) => p.taxPaidCash).filter((v): v is number => v !== null))
+  const itcUtilised = num(d.itc_utilised)
+  const itcClaimed = num(d.itc_claimed)
+    ?? sumOf(periods.map((p) => p.itcClaimed).filter((v): v is number => v !== null))
+  const reverseCharge = num(d.reverse_charge_liability)
+  const interestLateFees = num(d.interest_and_late_fees)
+  const carriedForward = num(d.tax_payable_carried_forward)
+  const cashTaxShare = taxPaidCash !== null && liability ? (taxPaidCash / liability) * 100 : null
+  const aggressiveItc = cashTaxShare !== null && cashTaxShare < GST_POLICY.cashTaxShareWarnPercent
+  const cashTaxBand: Band | null = cashTaxShare === null ? null
+    : cashTaxShare >= 25 ? 'STRONG' : cashTaxShare >= 15 ? 'GOOD'
+    : cashTaxShare >= GST_POLICY.cashTaxShareWarnPercent ? 'MODERATE'
+    : cashTaxShare > 0 ? 'WEAK' : 'CRITICAL'
+  const effectiveTaxRate = taxPaidCash !== null && turnover ? (taxPaidCash / turnover) * 100 : null
+  const arrears = sumOf([carriedForward, interestLateFees].filter((v): v is number => v !== null))
+  const arrearsBand: Band | null = carriedForward === null && interestLateFees === null ? null
+    : (arrears ?? 0) > 0 ? 'WEAK' : 'STRONG'
+
+  const returnsDue = num(d.returns_due)
+  const returnsFiled = num(d.returns_filed)
+  const periodTimingKnown = periods.some((p) => p.filedOnTime !== null)
+  const periodsLate = periods.filter((p) => p.filedOnTime === false).length
+  const lateFilings = num(d.late_filings) ?? (periodTimingKnown ? periodsLate : null)
+  const missed = returnsDue !== null && returnsFiled !== null ? Math.max(0, returnsDue - returnsFiled) : null
+  const filingCompliance = returnsDue !== null && returnsFiled !== null && returnsDue > 0
+    ? (returnsFiled / returnsDue) * 100 : null
+  const onTime = returnsFiled !== null && lateFilings !== null && returnsFiled > 0
+    ? ((returnsFiled - lateFilings) / returnsFiled) * 100
+    : periodTimingKnown && periods.length
+      ? ((periods.length - periodsLate) / periods.length) * 100 : null
+  const filingBand: Band | null = missed === null && !periodTimingKnown ? null
+    : (missed ?? 0) > GST_POLICY.maxMissedFilings ? 'CRITICAL'
+    : (missed ?? 0) > 0 ? 'MODERATE'
+    : (lateFilings ?? 0) === 0 ? 'STRONG'
+    : (lateFilings ?? 0) <= 1 ? 'GOOD' : 'MODERATE'
+
+  /* ---- 4. Consistency between returns ----------------------------------- */
+  const g1g3Delta = gstr1Total !== null && gstr3bTotal !== null && gstr3bTotal > 0
+    ? ((gstr1Total - gstr3bTotal) / gstr3bTotal) * 100 : null
+  const g1g3Gap = g1g3Delta === null ? null : Math.abs(g1g3Delta)
+  const g1g3Band: Band | null = g1g3Gap === null ? null
+    : g1g3Gap <= GST_POLICY.gstr1VsGstr3bTolerancePercent ? 'STRONG'
+    : g1g3Gap <= 10 ? 'GOOD'
+    : g1g3Gap <= GST_POLICY.gstr1VsGstr3bCriticalPercent ? 'MODERATE'
+    : g1g3Gap <= 25 ? 'WEAK' : 'CRITICAL'
+
+  const gstr9 = num(d.gstr9_annual_turnover)
+  const gstr9Delta = gstr9 !== null && turnover ? ((gstr9 - turnover) / turnover) * 100 : null
+  const gstr9Band: Band | null = gstr9Delta === null ? null
+    : Math.abs(gstr9Delta) <= GST_POLICY.gstr1VsGstr3bTolerancePercent ? 'STRONG'
+    : Math.abs(gstr9Delta) <= GST_POLICY.gstr1VsGstr3bCriticalPercent ? 'MODERATE' : 'WEAK'
+
+  const gstr2bItc = num(d.gstr2b_itc)
+  const itcDelta = gstr2bItc !== null && itcClaimed !== null && gstr2bItc > 0
+    ? ((itcClaimed - gstr2bItc) / gstr2bItc) * 100 : null
+  const itcGap = itcDelta === null ? null : Math.abs(itcDelta)
+  const itcBand: Band | null = itcGap === null ? null
+    : itcGap <= 5 ? 'STRONG'
+    : itcGap <= GST_POLICY.itcMismatchTolerancePercent ? 'GOOD'
+    : itcGap <= 25 ? 'MODERATE' : 'WEAK'
+
+  // Cross-checks against the other documents on file, read exactly the way
+  // itr() reads its own turnover-credibility block.
+  const itrFound = docOf(documents, 'ITR')
+  const itrYears = itrFound ? arr(itrFound.data.years) : []
+  const itrLatest: Record<string, unknown> | null = itrYears.length
+    ? itrYears[itrYears.length - 1] : itrFound ? itrFound.data : null
+  const itrTurnover = itrLatest ? num(itrLatest.business_turnover) : null
+  const itrDelta = itrTurnover !== null && itrTurnover > 0 && turnover !== null
+    ? ((turnover - itrTurnover) / itrTurnover) * 100 : null
+  const itrGap = itrDelta === null ? null : Math.abs(itrDelta)
+  const itrBand: Band | null = itrGap === null ? null
+    : itrGap <= 10 ? 'STRONG' : itrGap <= 20 ? 'GOOD' : itrGap <= 35 ? 'MODERATE'
+    : itrGap <= 50 ? 'WEAK' : 'CRITICAL'
+
+  const bankFound = docOf(documents, 'BANK_STATEMENT')
+  const bankMonthly = bankFound ? numList(bankFound.data.monthly_credits) : []
+  const bankTotal = sumOf(bankMonthly)
+  // Statements rarely run exactly twelve months; annualise so the comparison
+  // against a full year of returns is like for like, and say so in the note.
+  const annualisedCredits = bankTotal !== null && bankMonthly.length
+    ? (bankTotal / bankMonthly.length) * 12 : null
+  const cashDepositPercent = bankFound ? num(bankFound.data.cash_deposit_percent) : null
+  const salesToCredits = turnover !== null && annualisedCredits ? turnover / annualisedCredits : null
+  // GST sales carry output tax that never lands as a separate credit, so a
+  // ratio slightly under 1 is normal; the read is on the wide misses.
+  const bankBand: Band | null = salesToCredits === null ? null
+    : salesToCredits >= 0.75 && salesToCredits <= 1.25 ? 'STRONG'
+    : salesToCredits >= 0.6 && salesToCredits <= 1.4 ? 'GOOD'
+    : salesToCredits >= 0.5 && salesToCredits <= 1.6 ? 'MODERATE' : 'WEAK'
+  const consistencyBand = worstBand([g1g3Band, gstr9Band, itcBand, itrBand, bankBand])
+
+  /* ---- 5. Business cash-flow quality ------------------------------------ */
+  const finFound = docOf(documents, 'FINANCIAL_STATEMENT')
+  const receivables = finFound ? num(finFound.data.receivables) : null
+  const receivableDays = receivables !== null && turnover ? (receivables / turnover) * 365 : null
+  const receivableBand: Band | null = receivableDays === null ? null
+    : receivableDays <= BUSINESS_POLICY.cycleGoodDays ? 'STRONG'
+    : receivableDays <= BUSINESS_POLICY.cycleModerateDays ? 'GOOD'
+    : receivableDays <= BUSINESS_POLICY.cycleWeakDays ? 'MODERATE' : 'WEAK'
 
   // Assessed margin: the programme's own grid applied to real turnover.
   const marginRate = businessType ? GST_MARGINS[businessType] ?? null : null
@@ -1193,9 +1414,70 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
         : Math.min(marginIncome * GST_POLICY.foirOnMargin, cap))
     : null
 
-  const band: Band | null = turnover === null ? null
-    : turnover >= 5e7 ? 'STRONG' : turnover >= 1e7 ? 'GOOD' : turnover >= 4e6 ? 'MODERATE' : 'WEAK'
+  /* ---- 6. Compliance behaviour ------------------------------------------ */
+  const nilPeriods = periods.filter((p) => p.nilReturn).length
+  const bankActive = bankTotal !== null && bankTotal > 0
+  const nilDespiteBanking = nilPeriods > 0 && bankActive
+  const notices = bool(d.has_notices_or_mismatches)
+  const amendments = num(d.amendment_count)
+  const complianceBand: Band | null = worstBand([
+    filingBand,
+    inactive ? 'CRITICAL' : status === 'ACTIVE' ? 'STRONG' : null,
+    arrearsBand,
+    notices === null ? null : notices ? 'WEAK' : 'STRONG',
+    nilDespiteBanking ? 'WEAK' : null,
+    amendments === null ? null : amendments >= 10 ? 'WEAK' : amendments > 0 ? 'MODERATE' : 'STRONG',
+  ])
 
+  const turnoverBand: Band | null = turnover === null ? null
+    : turnover >= 5e7 ? 'STRONG' : turnover >= 1e7 ? 'GOOD' : turnover >= 4e6 ? 'MODERATE' : 'WEAK'
+  const stabilityBand: Band | null = volatility === null ? (suddenStepUp ? 'WEAK' : null)
+    : suddenStepUp ? 'WEAK'
+    : volatility < 20 ? 'STRONG'
+    : volatility < GST_POLICY.volatilityWarnPercent ? 'GOOD'
+    : volatility < GST_POLICY.volatilityCriticalPercent ? 'MODERATE' : 'WEAK'
+
+  /* ---- Red flags: only the ones the parsed figures actually evidence ----- */
+  const flags: string[] = []
+  if (inactive) flags.push(status === 'CANCELLED' ? 'GSTIN cancelled' : status === 'SUSPENDED' ? 'GSTIN suspended' : 'Registration flagged on the return set')
+  if (shortVintage && vintageMonths !== null) flags.push(`GSTIN only ${vintageMonths} month${vintageMonths === 1 ? '' : 's'} old`)
+  if (g1g3Delta !== null && g1g3Delta > GST_POLICY.gstr1VsGstr3bCriticalPercent) {
+    flags.push(`GSTR-1 above GSTR-3B by ${g1g3Delta.toFixed(0)}%`)
+  }
+  if (itrDelta !== null && itrGap !== null && itrGap > 25) {
+    flags.push(`GST turnover ${itrDelta > 0 ? 'above' : 'below'} ITR by ${itrGap.toFixed(0)}%`)
+  }
+  if (salesToCredits !== null && salesToCredits > 1.6) flags.push('GST sales far above bank credits')
+  if (salesToCredits !== null && salesToCredits < 0.5) flags.push('Bank credits far above GST sales')
+  if (suddenStepUp && stepUpPercent !== null) flags.push(`Turnover up ${stepUpPercent.toFixed(0)}% in the latest periods`)
+  if (suddenYoy && yoy !== null) flags.push(`Turnover up ${yoy.toFixed(0)}% year on year`)
+  if (creditNoteRatio !== null && creditNoteRatio > GST_POLICY.creditNoteCriticalPercent) {
+    flags.push(`Credit notes are ${creditNoteRatio.toFixed(0)}% of sales`)
+  }
+  if (aggressiveItc && cashTaxShare !== null) flags.push(`Only ${cashTaxShare.toFixed(0)}% of GST liability paid in cash`)
+  if (itcDelta !== null && itcDelta > GST_POLICY.itcMismatchTolerancePercent) {
+    flags.push(`ITC claimed exceeds GSTR-2B by ${itcDelta.toFixed(0)}%`)
+  }
+  if (nilDespiteBanking) flags.push(`${nilPeriods} nil return${nilPeriods === 1 ? '' : 's'} despite bank credits`)
+  if (topOne !== null && topOne >= GST_POLICY.concentrationWarnPercent) flags.push(`Top buyer is ${topOne.toFixed(0)}% of sales`)
+  if (topFive !== null && topFive >= 80) flags.push(`Top five buyers are ${topFive.toFixed(0)}% of sales`)
+  if (missed !== null && missed > 0) flags.push(`${missed} GST return${missed === 1 ? '' : 's'} unfiled`)
+  if ((lateFilings ?? 0) > 0) flags.push(`${lateFilings} return${lateFilings === 1 ? '' : 's'} filed late`)
+  if ((carriedForward ?? 0) > 0) flags.push(`${money(carriedForward)} tax payable carried forward`)
+  if ((interestLateFees ?? 0) > 0) flags.push(`${money(interestLateFees)} interest and late fees`)
+  if ((amendments ?? 0) >= 5) flags.push(`${amendments} invoice amendments to past periods`)
+  if (notices === true) flags.push('Notices or return mismatches on record')
+  if ((extraRegistrations ?? 0) > 0) flags.push(`${extraRegistrations} further GSTIN${extraRegistrations === 1 ? '' : 's'} not covered here`)
+  if (cashDepositPercent !== null && cashDepositPercent > 25) flags.push(`Cash is ${cashDepositPercent.toFixed(0)}% of bank credits`)
+
+  /* ---- Section band ------------------------------------------------------ */
+  const componentBands = [turnoverBand, stabilityBand, complianceBand, consistencyBand, cashTaxBand]
+    .filter((b): b is Band => b !== null)
+  const base = componentBands.length ? mean(componentBands.map((b) => BAND_POINTS[b])) : null
+  const band: Band | null = base === null ? null
+    : bandFromScore(Math.max(0, base - flags.length * 5))
+
+  /* ---- Knockouts --------------------------------------------------------- */
   const knockouts: SectionKnockout[] = []
   if (turnover !== null && turnover < GST_POLICY.minAnnualTurnover) {
     knockouts.push({
@@ -1209,6 +1491,80 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
       detail: `${missed} returns unfiled in the period (limit ${GST_POLICY.maxMissedFilings}).`,
     })
   }
+  if (inactive) {
+    knockouts.push({
+      code: 'GST_REGISTRATION_INACTIVE',
+      label: status === 'CANCELLED' ? 'GSTIN cancelled' : 'GSTIN suspended or cancelled',
+      detail: suspensionNote
+        ?? `The registration reads ${statusLabel?.toLowerCase() ?? 'inactive'} — a live GSTIN is a precondition of this programme.`,
+    })
+  }
+
+  /* ---- Period table ------------------------------------------------------ */
+  const periodTable: SectionTable = {
+    title: 'Return periods',
+    sub: periods.length
+      ? `${periods.length} period${periods.length === 1 ? '' : 's'} on file, oldest first — GSTR-1 against GSTR-3B`
+      : 'One row per return period once the upload is parsed',
+    columns: ['Period', 'GSTR-1', 'GSTR-3B', 'Gap', 'Tax in cash', 'ITC claimed', 'Filed'],
+    rows: periods.map((p) => [
+      p.label,
+      money(p.gstr1),
+      money(p.gstr3b ?? p.value),
+      p.gstr1 !== null && p.gstr3b !== null ? money(p.gstr1 - p.gstr3b) : null,
+      money(p.taxPaidCash),
+      money(p.itcClaimed),
+      p.nilReturn ? 'Nil' : p.filedOnTime === null ? null : p.filedOnTime ? 'On time' : 'Late',
+    ]),
+    emptyText: 'No return periods in the parsed document.',
+  }
+
+  /* ---- Observations: rule-based reads of the figures above --------------- */
+  const observations: string[] = []
+  if (turnover !== null) {
+    observations.push('GST turnover is sales, not income — the assessed margin above applies the programme\'s own grid to it, and includes output tax on the sales. Profit belongs to the ITR and the financials, collections to the bank statement.')
+  }
+  if (shortVintage && vintageMonths !== null) {
+    observations.push(`The GSTIN was granted ${vintageMonths} month${vintageMonths === 1 ? '' : 's'} ago. A recently created registration means limited verifiable business vintage even where the applicant states a longer operating history — the earlier trading has to be evidenced some other way.`)
+  }
+  if (suddenStepUp && stepUpPercent !== null) {
+    observations.push(`Turnover in the last three periods runs ${stepUpPercent.toFixed(0)}% above the earlier periods on file. A step-up that lands immediately before the application needs the underlying business reason before the higher figure is used for sizing.`)
+  }
+  if (g1g3Gap !== null) {
+    observations.push(g1g3Gap > GST_POLICY.gstr1VsGstr3bCriticalPercent
+      ? `GSTR-1 outward supplies of ${money(gstr1Total)} against ${money(gstr3bTotal)} declared in GSTR-3B — a ${g1g3Gap.toFixed(0)}% gap. Differences this wide are not explained by amendments or credit-note timing and normally hold the file up for reconciliation.`
+      : `GSTR-1 outward supplies of ${money(gstr1Total)} reconcile with ${money(gstr3bTotal)} declared in GSTR-3B within ${g1g3Gap.toFixed(0)}%.`)
+  }
+  if (aggressiveItc && cashTaxShare !== null) {
+    observations.push(`Only ${cashTaxShare.toFixed(0)}% of the ${money(liability)} GST liability was discharged in cash, the rest through input-tax credit. High sales with very little cash tax is a standard trigger to check the ITC chain against GSTR-2B.`)
+  }
+  if (itrGap !== null) {
+    observations.push(itrGap > 25
+      ? `GST turnover of ${money(turnover)} differs from the ${money(itrTurnover)} declared in the ITR by ${itrGap.toFixed(0)}%. Expect the income to be discounted or the file referred for deeper verification.`
+      : `GST turnover of ${money(turnover)} reconciles with the ${money(itrTurnover)} declared in the ITR within ${itrGap.toFixed(0)}%.`)
+  }
+  if (salesToCredits !== null) {
+    observations.push(salesToCredits > 1.6
+      ? `${money(turnover)} of GST sales against ${money(annualisedCredits)} of annualised bank credits. Either collections run through accounts not on file, or the sales are not converting into receipts.`
+      : salesToCredits < 0.5
+        ? `Annualised bank credits of ${money(annualisedCredits)} run well ahead of ${money(turnover)} of GST sales — non-sales credits or unbilled receipts need identifying before the banking is read as turnover.`
+        : `${money(turnover)} of GST sales sits in line with ${money(annualisedCredits)} of annualised bank credits.`)
+  }
+  if (receivableDays !== null && receivableDays > BUSINESS_POLICY.cycleModerateDays) {
+    observations.push(`${receivableDays.toFixed(0)} days of receivables against this turnover. Sales are being reported well ahead of collection, so the working-capital gap — not the turnover — governs what the file can service.`)
+  }
+  if (nilDespiteBanking) {
+    observations.push(`${nilPeriods} nil return${nilPeriods === 1 ? ' was' : 's were'} filed for periods in which the bank account shows credits. Either sales sit outside GST or the returns understate them; both need explaining.`)
+  }
+  if (composition) {
+    observations.push('Filed under the composition scheme — turnover is reported on CMP-08 with no input-tax credit and no invoice-level outward-supply detail, so the GSTR-1/GSTR-3B reconciliation and ITC checks do not apply to this file.')
+  }
+  if (exportShare !== null && exportShare > 10) {
+    observations.push(`${exportShare.toFixed(0)}% of sales are exports or zero-rated supplies. These carry no output tax, so the tax-paid figures below understate activity rather than indicating avoidance.`)
+  }
+  if ((extraRegistrations ?? 0) > 0) {
+    observations.push(`${extraRegistrations} further GSTIN${extraRegistrations === 1 ? ' is' : 's are'} stated for this entity. Turnover, compliance and any losses under those registrations are not visible in this upload and have to be called for separately.`)
+  }
 
   return {
     key: 'GST', label: 'GST', sourceType: 'GST_RETURNS', sourceLabel: 'GST returns',
@@ -1219,72 +1575,109 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
           turnover !== null ? `${money(turnover)} turnover` : null,
           yoy === null ? null : yoy >= 0 ? 'growing' : 'declining',
           missed === null ? null : missed === 0 ? 'filings current' : 'filing gaps present',
+          g1g3Gap === null ? null : g1g3Gap <= GST_POLICY.gstr1VsGstr3bTolerancePercent ? 'GSTR-1 and 3B reconcile' : 'GSTR-1 and 3B differ',
         ].filter(Boolean).join(', ') || (hasSource ? 'Returns parsed' : 'GST returns not on file yet'),
     metrics: [
       { label: 'Turnover', value: turnover !== null ? fmtCr(turnover) : null },
       { label: 'GSTIN', value: gstin },
-      { label: 'Filing month', value: filingMonth },
+      { label: 'Status', value: statusLabel },
       { label: 'Monthly avg', value: avgMonthly !== null ? fmtK(avgMonthly) : turnover !== null ? fmtK(turnover / 12) : null },
     ],
     trend: {
       title: 'Turnover',
-      sub: filingFrequency ? `GSTR-3B · ${titleCase(filingFrequency)?.toLowerCase()} filer` : 'GSTR-3B periods on file',
-      right: yoy === null ? null : { text: `${yoy >= 0 ? '+' : ''}${yoy.toFixed(1)}% YoY`, band: yoy >= 0 ? 'STRONG' : 'CRITICAL' },
-      points: monthly.map((m, i) => ({
-        label: str(m.month) ?? `M${i + 1}`,
-        value: monthlyValues[i],
-        display: money(monthlyValues[i]),
-      })),
-      axis: monthly.length ? sparseAxis(monthly.map((m) => str(m.month))) : undefined,
+      sub: !hasSource ? 'Taxable turnover — fills in per return period from the uploaded returns'
+        : composition ? 'CMP-08 periods on file'
+        : filingFrequency ? `GSTR-3B · ${titleCase(filingFrequency)?.toLowerCase()} filer` : 'GSTR-3B periods on file',
+      right: yoy === null ? null : {
+        text: `${yoy >= 0 ? '+' : ''}${yoy.toFixed(1)}% YoY`,
+        // Growth is not automatically good: a jump concentrated in the periods
+        // before the application reads as a caution, not a strength.
+        band: suddenStepUp || suddenYoy ? 'WEAK' : yoy >= 0 ? 'STRONG' : 'CRITICAL',
+      },
+      points: periods.map((p) => ({ label: p.label, value: p.value, display: money(p.value) })),
+      axis: periods.length ? sparseAxis(periods.map((p) => p.label)) : undefined,
       tiles: [
         { label: 'Annual', value: money(turnover) },
         { label: 'Monthly avg', value: money(avgMonthly) },
         {
           label: 'Volatility', value: volatility === null ? null : `${volatility.toFixed(0)}%`,
           sub: seasonal === null ? null : seasonal ? 'Seasonal' : 'Stable',
-          band: volatility === null ? null : volatility > GST_POLICY.volatilityWarnPercent ? 'WEAK' : 'STRONG',
+          band: stabilityBand,
         },
         {
           label: 'Filed', value: filingCompliance === null ? null : `${filingCompliance.toFixed(0)}%`,
           sub: missed === null ? null : `${missed} missed`,
-          band: missed === null ? null : missed === 0 ? 'STRONG' : 'WEAK',
+          band: filingBand,
+        },
+        {
+          label: 'Latest vs earlier',
+          value: stepUpPercent === null ? null : `${stepUpPercent >= 0 ? '+' : ''}${stepUpPercent.toFixed(0)}%`,
+          sub: stepUpPercent === null ? null : suddenStepUp ? 'Step-up before application' : 'Last 3 periods',
+          band: stepUpPercent === null ? null : suddenStepUp ? 'WEAK' : 'GOOD',
         },
       ],
     },
+    hero: [
+      { label: 'Annual turnover', value: money(turnover), sub: !hasSource ? null : summed !== null && num(d.turnover) === null ? `Summed from ${present.length} periods` : 'As stated on the returns' },
+      { label: 'GSTR-3B taxable turnover', value: money(reportedTurnover), sub: gstr3bTotal !== null ? `Across ${periods.length} periods` : null },
+      { label: 'GST liability', value: money(liability), sub: reverseCharge !== null ? `Incl. ${money(reverseCharge)} reverse charge` : null },
+      { label: 'Tax paid in cash', value: money(taxPaidCash), sub: cashTaxShare !== null ? `${cashTaxShare.toFixed(0)}% of liability` : null, band: cashTaxBand },
+      { label: 'Assessed margin income', value: money(marginIncome), sub: marginPercent !== null ? `${marginPercent.toFixed(1)}% of turnover` : null },
+    ],
+    tables: [periodTable],
     signals: {
       title: 'Signals',
+      sub: 'Registration, GSTR-1 mix, GSTR-3B tax payment, return consistency, cash-flow quality and compliance',
       rows: [
+        {
+          label: 'Registration status',
+          value: statusLabel,
+          band: statusBand,
+          note: inactive
+            ? suspensionNote ?? 'A cancelled or suspended GSTIN cannot support a live facility — this needs resolving before sanction'
+            : status === 'ACTIVE' ? 'Live registration on the return set' : undefined,
+        },
+        {
+          label: 'Business vintage on GST',
+          value: vintageText,
+          band: vintageBand,
+          note: registrationDate === null
+            ? 'The return set did not state a registration date'
+            : shortVintage
+              ? `Registered ${registrationDate} — under ${GST_POLICY.minRegistrationVintageMonths} months, so a longer claimed operating history needs separate evidence`
+              : `Registered ${registrationDate}`,
+        },
         {
           label: 'Turnover on file', value: money(turnover),
           band: turnover === null ? null : turnover >= GST_POLICY.minAnnualTurnover ? 'STRONG' : 'CRITICAL',
+          note: turnover !== null && turnover < GST_POLICY.minAnnualTurnover
+            ? `Below the ${money(GST_POLICY.minAnnualTurnover)} programme floor` : undefined,
         },
         {
           label: 'YoY growth', value: yoy === null ? null : `${yoy >= 0 ? '+' : ''}${yoy.toFixed(1)}%`,
-          band: yoy === null ? null : yoy >= 10 ? 'STRONG' : yoy >= 0 ? 'GOOD' : yoy >= -10 ? 'MODERATE' : 'WEAK',
+          band: yoy === null ? null : suddenYoy ? 'WEAK' : yoy >= 10 ? 'STRONG' : yoy >= 0 ? 'GOOD' : yoy >= -10 ? 'MODERATE' : 'WEAK',
           note: priorYear !== null ? `Prior year ${money(priorYear)}` : undefined,
         },
         {
-          label: 'Filing compliance',
-          value: filingCompliance === null ? null
-            : `${filingCompliance.toFixed(0)}% filed${onTime !== null ? ` · ${onTime.toFixed(0)}% on time` : ''}`,
-          band: missed === null ? null
-            : missed === 0 && (lateFilings ?? 0) <= 1 ? 'STRONG'
-            : missed === 0 ? 'GOOD' : missed <= 2 ? 'MODERATE' : 'CRITICAL',
-          note: missed !== null && missed > 0 ? `${missed} returns unfiled` : undefined,
-        },
-        {
           label: 'Turnover volatility', value: volatility === null ? null : `${volatility.toFixed(0)}% CoV`,
-          band: volatility === null ? null
-            : volatility < 20 ? 'STRONG'
-            : volatility < GST_POLICY.volatilityWarnPercent ? 'GOOD'
-            : volatility < GST_POLICY.volatilityCriticalPercent ? 'MODERATE' : 'WEAK',
-          note: seasonal ? 'Seasonal pattern — size limits on peak, not average' : undefined,
+          band: stabilityBand,
+          note: suddenStepUp && stepUpPercent !== null
+            ? `Last three periods run ${stepUpPercent.toFixed(0)}% above the earlier ones — verify the business reason before sizing on it`
+            : seasonal ? 'Seasonal pattern — size limits on the trough, not the peak' : undefined,
         },
         {
-          label: 'Assessed margin',
-          value: marginPercent === null ? null : `${marginPercent.toFixed(1)}%${marginIncome !== null ? ` → ${money(marginIncome)}` : ''}`,
-          band: marginPercent === null ? null : 'GOOD',
-          note: businessType ? `${businessType.replace(/_/g, ' ').toLowerCase()} grid` : undefined,
+          label: 'Sales mix — B2B vs B2C',
+          value: b2bShare === null && b2cShare === null ? null
+            : `${b2bShare !== null ? `B2B ${b2bShare.toFixed(0)}%` : 'B2B —'}${b2cShare !== null ? ` · B2C ${b2cShare.toFixed(0)}%` : ''}`,
+          band: mixBand,
+          note: (b2bShare ?? 0) >= 90
+            ? 'Almost entirely registered buyers — collections depend on corporate payment behaviour, so receivable days govern'
+            : (b2cShare ?? 0) >= 80
+              ? 'Almost entirely consumer sales — largely cash and card collections, harder to trace to a single payer'
+              : interstateShare !== null || exportShare !== null
+                ? [interstateShare !== null ? `Interstate ${interstateShare.toFixed(0)}%` : null,
+                   exportShare !== null ? `Exports ${exportShare.toFixed(0)}%` : null].filter(Boolean).join(' · ')
+                : undefined,
         },
         {
           label: 'Buyer concentration',
@@ -1295,6 +1688,145 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
             ? 'Single-buyer dependence is a real receivables risk' : undefined,
         },
         {
+          label: 'Credit notes & reversals',
+          value: creditNotes === null ? null
+            : `${money(creditNotes)}${creditNoteRatio !== null ? ` · ${creditNoteRatio.toFixed(1)}% of sales` : ''}`,
+          band: creditNoteBand,
+          note: creditNoteRatio !== null && creditNoteRatio > GST_POLICY.creditNoteCriticalPercent
+            ? 'Large unexplained credit notes can mask reversed or never-collected sales' : undefined,
+        },
+        {
+          label: 'Filing regularity',
+          value: filingCompliance === null && onTime === null ? null
+            : [
+                filingCompliance !== null ? `${filingCompliance.toFixed(0)}% filed` : null,
+                onTime !== null ? `${onTime.toFixed(0)}% on time` : null,
+              ].filter(Boolean).join(' · '),
+          band: filingBand,
+          note: missed !== null && missed > 0
+            ? `${missed} return${missed === 1 ? '' : 's'} unfiled — GSTR-3B is due every tax period and GSTR-1 is due even for a nil period`
+            : undefined,
+        },
+        {
+          label: 'Tax paid in cash vs liability',
+          value: cashTaxShare === null ? null
+            : `${money(taxPaidCash)} of ${money(liability)} · ${cashTaxShare.toFixed(0)}%`,
+          band: cashTaxBand,
+          note: aggressiveItc
+            ? 'High sales with very little cash tax — check the ITC chain before treating the turnover as real'
+            : itcUtilised !== null ? `ITC utilised ${money(itcUtilised)}` : undefined,
+        },
+        {
+          label: 'ITC claimed vs GSTR-2B',
+          value: itcDelta === null ? null
+            : `${money(itcClaimed)} vs ${money(gstr2bItc)} · ${itcDelta >= 0 ? '+' : ''}${itcDelta.toFixed(0)}%`,
+          band: itcBand,
+          note: gstr2bItc === null
+            ? 'GSTR-2B was not in the upload, so the ITC claimed cannot be checked against the auto-populated figure'
+            : itcGap !== null && itcGap > GST_POLICY.itcMismatchTolerancePercent
+              ? 'ITC claimed beyond what GSTR-2B supports normally attracts a demand' : undefined,
+        },
+        {
+          label: 'Tax arrears & late fees',
+          value: carriedForward === null && interestLateFees === null ? null
+            : (arrears ?? 0) === 0 ? 'Nil'
+            : [
+                carriedForward !== null && carriedForward > 0 ? `${money(carriedForward)} carried forward` : null,
+                interestLateFees !== null && interestLateFees > 0 ? `${money(interestLateFees)} interest & late fees` : null,
+              ].filter(Boolean).join(' · '),
+          band: arrearsBand,
+          note: (arrears ?? 0) > 0
+            ? 'Liability declared but not discharged has to be cleared or explained before sanction' : undefined,
+        },
+        {
+          label: 'GSTR-1 vs GSTR-3B',
+          value: g1g3Delta === null ? null
+            : `${money(gstr1Total)} vs ${money(gstr3bTotal)} · ${g1g3Delta >= 0 ? '+' : ''}${g1g3Delta.toFixed(0)}%`,
+          band: g1g3Band,
+          note: !hasSource ? undefined
+            : gstr1Total === null || gstr3bTotal === null
+              ? 'The periods did not carry both a GSTR-1 and a GSTR-3B figure, so the two cannot be reconciled'
+              : g1g3Gap !== null && g1g3Gap <= GST_POLICY.gstr1VsGstr3bTolerancePercent
+                ? `Within the ${GST_POLICY.gstr1VsGstr3bTolerancePercent}% tolerance — amendments, credit notes and timing explain differences this small`
+              : g1g3Gap !== null && g1g3Gap <= GST_POLICY.gstr1VsGstr3bCriticalPercent
+                ? `Beyond the ${GST_POLICY.gstr1VsGstr3bTolerancePercent}% tolerance but under the ${GST_POLICY.gstr1VsGstr3bCriticalPercent}% concern threshold — amendments and credit-note timing can still account for a gap this size`
+                : 'Persistent unexplained differences between the two returns are a material concern',
+        },
+        {
+          label: 'GSTR-9 annual reconciliation',
+          value: gstr9 === null ? null
+            : `${money(gstr9)}${gstr9Delta !== null ? ` · ${gstr9Delta >= 0 ? '+' : ''}${gstr9Delta.toFixed(0)}% vs monthly` : ''}`,
+          band: gstr9Band,
+          note: gstr9 === null
+            ? 'No GSTR-9 in the upload — the annual return is not filed by every taxpayer, so this is not itself adverse'
+            : undefined,
+        },
+        {
+          label: 'GST vs ITR turnover',
+          value: itrDelta === null ? null
+            : `${money(turnover)} vs ${money(itrTurnover)} · ${itrDelta >= 0 ? '+' : ''}${itrDelta.toFixed(0)}%`,
+          band: itrBand,
+          note: itrFound === null
+            ? 'No ITR on file yet — the GST turnover cannot be checked against declared income'
+            : itrTurnover === null
+              ? 'The ITR did not state a turnover, so no comparison is possible'
+              : itrGap !== null && itrGap > 25
+                ? 'A material mismatch — GST shows sales and the ITR shows profit, but the sales figure should still agree'
+                : undefined,
+        },
+        {
+          label: 'GST sales vs bank credits',
+          value: salesToCredits === null ? null
+            : `${money(turnover)} sales vs ${money(annualisedCredits)} credited`,
+          band: bankBand,
+          note: bankFound === null
+            ? 'No bank statement on file yet — reported sales cannot be checked against actual collections'
+            : turnover === null
+              ? 'No turnover on the returns to compare against the credits'
+              : `Credits annualised from ${bankMonthly.length} statement month${bankMonthly.length === 1 ? '' : 's'}; GST sales include output tax, so a ratio a little under 1 is normal`,
+        },
+        {
+          label: 'Receivable days',
+          value: receivableDays === null ? null : `${receivableDays.toFixed(0)} days`,
+          band: receivableBand,
+          note: finFound === null
+            ? 'Needs a financial statement for receivables — GST alone shows sales, not what has been collected'
+            : receivables !== null ? `${money(receivables)} of receivables against this turnover` : undefined,
+        },
+        {
+          label: 'Nil returns vs banking activity',
+          value: !hasSource ? null : nilPeriods === 0 ? 'None' : `${nilPeriods} of ${periods.length} periods`,
+          band: nilPeriods === 0 ? 'STRONG' : nilDespiteBanking ? 'WEAK' : bankFound === null ? null : 'MODERATE',
+          note: nilPeriods === 0 ? undefined
+            : bankFound === null
+              ? 'No bank statement on file, so nil returns cannot be tested against actual banking activity'
+              : nilDespiteBanking
+                ? `The account shows ${money(bankTotal)} of credits over the same window`
+                : 'The bank statement shows no offsetting activity for those periods',
+        },
+        {
+          label: 'Notices, mismatches & amendments',
+          value: notices === null && amendments === null ? null
+            : [
+                notices === null ? null : notices ? 'Notices on record' : 'No notices stated',
+                amendments === null ? null : `${amendments} amendment${amendments === 1 ? '' : 's'}`,
+              ].filter(Boolean).join(' · '),
+          band: notices === null && amendments === null ? null
+            : notices === true ? 'WEAK'
+            : (amendments ?? 0) >= 10 ? 'WEAK' : (amendments ?? 0) > 0 ? 'MODERATE' : 'STRONG',
+          note: (amendments ?? 0) >= 5
+            ? 'Repeated amendments to past invoices need a reason — they move turnover between periods'
+            : undefined,
+        },
+        {
+          label: 'Assessed margin',
+          value: marginPercent === null ? null : `${marginPercent.toFixed(1)}%${marginIncome !== null ? ` → ${money(marginIncome)}` : ''}`,
+          band: marginPercent === null ? null : 'GOOD',
+          note: businessType
+            ? `${businessType.replace(/_/g, ' ').toLowerCase()} grid — a surrogate for income, not a profit figure off the document`
+            : 'Needs a business type to pick a rate off the margin grid',
+        },
+        {
           label: 'Effective tax rate',
           value: effectiveTaxRate === null ? null : `${effectiveTaxRate.toFixed(2)}% of turnover`,
           band: effectiveTaxRate === null ? null : 'MODERATE',
@@ -1302,16 +1834,136 @@ function gst(lead: Lead, documents: DocumentRow[]): SectionView {
         },
       ],
     },
+    subHero: [
+      { label: 'GST sales', value: money(turnover), sub: 'Reported outward supplies' },
+      { label: 'Bank credits', value: money(annualisedCredits), sub: bankFound ? `Annualised from ${bankMonthly.length} months` : 'No statement on file' },
+      { label: 'Sales to credits', value: salesToCredits === null ? null : `${salesToCredits.toFixed(2)}x`, band: bankBand },
+      { label: 'Receivable days', value: receivableDays === null ? null : `${receivableDays.toFixed(0)}`, sub: finFound ? 'From the financials' : 'Needs a financial statement', band: receivableBand },
+      { label: 'Cash share of credits', value: cashDepositPercent === null ? null : `${cashDepositPercent.toFixed(0)}%`, sub: bankFound ? 'Cash deposits in the account' : 'No statement on file', band: cashDepositPercent === null ? null : cashDepositPercent > 25 ? 'WEAK' : 'GOOD' },
+    ],
+    breakdowns: [
+      {
+        title: 'Outward supplies (GSTR-1)',
+        sub: 'Composition of reported sales; interstate and export are memo cuts of the same book',
+        rows: [
+          { label: 'B2B — registered buyers', value: money(b2b), sharePercent: b2bShare },
+          { label: 'B2C — consumer sales', value: money(b2c), sharePercent: b2cShare },
+          { label: 'Interstate supplies', sub: 'Memo — already counted in B2B / B2C', value: money(interstate), sharePercent: interstateShare },
+          { label: 'Exports & zero-rated', sub: 'Memo — no output tax on these', value: money(exports), sharePercent: exportShare },
+          { label: 'Credit notes & reversals', sub: 'Deducted from outward supplies', value: money(creditNotes), sharePercent: creditNoteRatio },
+        ],
+        total: { label: 'Annual turnover', value: money(turnover) },
+      },
+    ],
+    panels: [
+      {
+        title: 'Registration & identity',
+        sub: tradeName ?? legalName ?? undefined,
+        items: [
+          { label: 'GSTIN', value: gstin },
+          { label: 'Status', value: statusLabel },
+          { label: 'Legal name', value: legalName },
+          { label: 'Trade name', value: tradeName },
+          { label: 'Constitution', value: constitution },
+          { label: 'Principal place of business', value: placeOfBusiness },
+          { label: 'Registered on', value: registrationDate },
+          { label: 'Vintage on GST', value: vintageText },
+          { label: 'Other GSTINs stated', value: extraRegistrations === null ? null : String(extraRegistrations) },
+          { label: 'Filing frequency', value: titleCase(filingFrequency) },
+          { label: 'Latest period', value: filingMonth },
+        ],
+      },
+      {
+        title: 'GSTR-1 outward supplies',
+        sub: 'Invoice-level sales as reported',
+        items: [
+          { label: 'GSTR-1 total', value: money(gstr1Total) },
+          { label: 'B2B sales', value: money(b2b) },
+          { label: 'B2C sales', value: money(b2c) },
+          { label: 'Interstate supplies', value: money(interstate) },
+          { label: 'Exports & zero-rated', value: money(exports) },
+          { label: 'Credit notes & reversals', value: money(creditNotes) },
+          { label: 'Top buyer share', value: topOne === null ? null : pct0(topOne) },
+          { label: 'Top five share', value: topFive === null ? null : pct0(topFive) },
+        ],
+      },
+      {
+        title: 'GSTR-3B & tax payment',
+        sub: 'Liability declared and how it was discharged',
+        items: [
+          { label: 'Taxable turnover reported', value: money(reportedTurnover) },
+          { label: 'GST liability', value: money(liability) },
+          { label: 'Tax paid in cash', value: money(taxPaidCash), emphasis: (taxPaidCash ?? 0) > 0 },
+          { label: 'ITC utilised', value: money(itcUtilised) },
+          { label: 'ITC claimed', value: money(itcClaimed) },
+          { label: 'GSTR-2B ITC', value: money(gstr2bItc) },
+          { label: 'Reverse-charge liability', value: money(reverseCharge) },
+          { label: 'Interest & late fees', value: money(interestLateFees) },
+          { label: 'Tax payable carried forward', value: money(carriedForward) },
+          { label: 'GSTR-9 annual turnover', value: money(gstr9) },
+        ],
+      },
+    ],
+    bandPanels: hasSource
+      ? [{
+          title: 'Consistency between returns',
+          items: [
+            { label: 'GSTR-1 vs GSTR-3B', band: g1g3Band },
+            { label: 'GSTR-9 annual figures', band: gstr9Band },
+            { label: 'GSTR-2B ITC vs ITC claimed', band: itcBand },
+            { label: 'ITR turnover', band: itrBand },
+            { label: 'Bank credits', band: bankBand },
+          ],
+          metrics: [
+            { label: 'GSTR-1', value: money(gstr1Total) },
+            { label: 'GSTR-3B', value: money(gstr3bTotal) },
+          ],
+        }]
+      : undefined,
     capacity: {
       label: 'Implied capacity',
       value: money(impliedCapacity),
       basis: impliedCapacity === null
-        ? 'Needs a declared turnover and a business type to apply the margin grid.'
+        ? 'Needs a declared turnover and a business type to apply the margin grid. Turnover is sales, not profit — this figure is a policy surrogate for income, never a figure read off the return.'
         : isSecured(lead) || cap === null
-          ? `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR. Unsecured turnover caps not applied — this is a secured facility, so collateral and cash flow govern.`
-          : `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR, capped at ${money(cap)} for this turnover band (unsecured programme).`,
+          ? `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR on turnover — a policy surrogate for income, not profit off the return (GST sales include output tax). Unsecured turnover caps not applied — this is a secured facility, so collateral and cash flow govern.`
+          : `${marginPercent!.toFixed(1)}% margin × ${GST_POLICY.foirOnMargin * 100}% FOIR on turnover, capped at ${money(cap)} for this turnover band (unsecured programme). Turnover is sales, not profit — GST sales include output tax, so this is a policy surrogate for income rather than a figure off the return.`,
     },
     knockouts,
+    // Held in place whenever a return set is on file: with nothing computable
+    // triggering it renders the clear state rather than disappearing. Withheld
+    // entirely with no returns, since "no red flags" would be a claim about a
+    // document nobody has read.
+    chips: hasSource
+      ? { title: 'Red flags', band: flags.length ? 'CRITICAL' : 'STRONG', items: flags }
+      : undefined,
+    notes: observations.length
+      ? { title: 'What the returns say', sub: 'Read across turnover, tax payment, the cross-checks and compliance', items: observations }
+      : undefined,
+    conduct: hasSource && band
+      ? {
+          title: 'Turnover credibility',
+          band,
+          text: [
+            inactive
+              ? 'The GSTIN is not live on the return set, which caps everything else this section says.'
+              : shortVintage
+                ? 'The registration is recent, so GST evidences only a short trading history regardless of the claimed vintage.'
+                : suddenStepUp
+                  ? 'Turnover steps up sharply in the periods before the application rather than building across the window on file.'
+                  : `Turnover is ${stabilityBand === 'STRONG' ? 'consistent' : stabilityBand === 'GOOD' ? 'broadly steady' : 'uneven'} across ${periods.length || 'the'} return periods.`,
+            complianceBand === 'STRONG' ? 'Returns are filed on time with the liability discharged.'
+              : complianceBand === null ? 'The returns did not yield filing counts or tax-payment figures.'
+              : 'Filing or tax-payment behaviour needs explaining before sanction.',
+            consistencyBand === null
+              ? 'Nothing on file yet reconciles the reported sales — no GSTR-1/3B pair, no ITR and no bank statement to check them against.'
+              : consistencyBand === 'STRONG' || consistencyBand === 'GOOD'
+                ? 'Reported sales reconcile with the other returns and documents on file.'
+                : 'Reported sales do not reconcile cleanly with the other returns and documents on file.',
+            'GST evidences sales only — profit belongs to the ITR and collections to the bank statement.',
+          ].join(' '),
+        }
+      : undefined,
   }
 }
 

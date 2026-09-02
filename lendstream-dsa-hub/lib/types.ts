@@ -30,6 +30,20 @@ export type PillarCode = 'BANKING' | 'BUREAU' | 'COLLATERAL' | 'GST'
 
 export type ApplicantEntityType = 'INDIVIDUAL' | 'COMPANY'
 
+/** Where this relationship originated. Attribution lives on the Applicant, not
+ *  on any one application — the channel that brought the person in doesn't
+ *  change when they come back for a second loan. */
+export type LeadSourceChannel = 'ONDC' | 'REFERRAL_PARTNER' | 'ORGANIC' | 'CAMPAIGN'
+
+export const LEAD_SOURCE_LABEL: Record<LeadSourceChannel, string> = {
+  ONDC: 'ONDC',
+  REFERRAL_PARTNER: 'Referral partner',
+  ORGANIC: 'Organic',
+  CAMPAIGN: 'Campaign',
+}
+
+export const LEAD_SOURCE_CHANNELS: LeadSourceChannel[] = ['ONDC', 'REFERRAL_PARTNER', 'ORGANIC', 'CAMPAIGN']
+
 export interface Applicant {
   id: string
   agent_id: string
@@ -43,8 +57,89 @@ export interface Applicant {
    *  /decisions/2026-08-31-lendstream-dsa-hub-applicant-application-relation.md. */
   pan_number: string | null
   entity_type: ApplicantEntityType
+  /** Attribution — how this relationship was sourced. Null until captured. */
+  lead_source_channel: LeadSourceChannel | null
+  /** Free text: which partner/DSA/agency referred them. Null unless relevant. */
+  referring_partner: string | null
   created_at: string
   updated_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Applicant relationship layer — everything below is applicant_id-scoped and
+// deliberately separate from the lead_id-scoped documents/interactions tables.
+// See migration 030_applicant_relationship.sql.
+// ---------------------------------------------------------------------------
+
+export type ConsentType = 'BUREAU_PULL' | 'LENDER_DATA_SHARING' | 'MARKETING'
+
+export const CONSENT_TYPE_LABEL: Record<ConsentType, string> = {
+  BUREAU_PULL: 'Bureau pull',
+  LENDER_DATA_SHARING: 'Lender panel data sharing',
+  MARKETING: 'Marketing communication',
+}
+
+export const CONSENT_TYPES: ConsentType[] = ['BUREAU_PULL', 'LENDER_DATA_SHARING', 'MARKETING']
+
+/**
+ * One consent capture. Append-only: a fresh row supersedes the prior one for
+ * that (applicant, consent_type) purely by having a later `captured_at`, so the
+ * full history of what was agreed, when, and over which channel survives.
+ */
+export interface ApplicantConsent {
+  id: string
+  applicant_id: string
+  consent_type: ConsentType
+  granted: boolean
+  /** How it was captured — App, SMS, Email, WhatsApp, Physical form. */
+  channel: string | null
+  captured_at: string
+  captured_by: string
+}
+
+export type ApplicantDocumentType = 'PAN_CARD' | 'AADHAAR' | 'ENTITY_KYC' | 'MOA_AOA' | 'OTHER'
+
+export const APPLICANT_DOC_TYPE_LABEL: Record<ApplicantDocumentType, string> = {
+  PAN_CARD: 'PAN Card',
+  AADHAAR: 'Aadhaar Card',
+  ENTITY_KYC: 'Entity KYC',
+  MOA_AOA: 'MOA / AOA',
+  OTHER: 'Other',
+}
+
+export const APPLICANT_DOC_TYPES: ApplicantDocumentType[] = ['PAN_CARD', 'AADHAAR', 'ENTITY_KYC', 'MOA_AOA', 'OTHER']
+
+/**
+ * A document in the applicant's own vault. Unlike `DocumentRow` (lead-scoped),
+ * these are stored and listed only — no OCR, no extraction, no status flow.
+ */
+export interface ApplicantDocument {
+  id: string
+  applicant_id: string
+  type: ApplicantDocumentType
+  name: string
+  storage_path: string
+  file_mime: string | null
+  uploaded_by: string | null
+  uploaded_at: string
+}
+
+export type ApplicantInteractionChannel =
+  | 'CALL' | 'WHATSAPP' | 'EMAIL' | 'FIELD_VISIT' | 'BRANCH_MEETING' | 'MEETING'
+
+/**
+ * A relationship-level touchpoint — with the person, not about one loan file.
+ * Carries no Customer/Internal/Bank category: that split belongs to the
+ * per-application Activity tab, where "which file is this about" is the point.
+ */
+export interface ApplicantInteraction {
+  id: string
+  applicant_id: string
+  agent_id: string
+  channel: ApplicantInteractionChannel
+  note: string | null
+  occurred_at: string
+  next_follow_up: string | null
 }
 
 /**

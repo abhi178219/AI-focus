@@ -154,28 +154,87 @@ const itrSchema = z.object({
   years: z.array(itrYearSchema).nullable(),
 })
 
+/**
+ * One return period off a GST upload — the GSTR-1 and the GSTR-3B for the same
+ * month or quarter. The period is the unit, the same way an assessment year is
+ * the unit of an ITR set: the GSTR-1-vs-GSTR-3B consistency check, the
+ * seasonality read and the filing-regularity read are all derived from it.
+ */
+const gstPeriodSchema = z.object({
+  month: z.string().nullable(),
+  /**
+   * The period's headline taxable turnover — the GSTR-3B figure where the
+   * return set carries both. Always populated when any turnover is stated.
+   */
+  taxable_value: z.number().nullable(),
+  /** Outward supplies as reported in GSTR-1 for this period. */
+  gstr1_taxable_value: z.number().nullable(),
+  /** Outward supplies as declared in GSTR-3B for this period. */
+  gstr3b_taxable_value: z.number().nullable(),
+  /** GST actually discharged in cash for this period (not through ITC). */
+  tax_paid_cash: z.number().nullable(),
+  itc_claimed: z.number().nullable(),
+  filed_on_time: z.boolean().nullable(),
+  /** True when a nil return was filed for this period. */
+  nil_return: z.boolean().nullable(),
+})
+
 const gstSchema = z.object({
+  /** Registration and business identity. */
   gstin: z.string().nullable(),
+  /**
+   * "ACTIVE" | "CANCELLED" | "SUSPENDED". Kept as a plain string, like every
+   * other constrained-vocabulary field in this file — a strict enum would fail
+   * the WHOLE extraction on a casing slip, and sections.ts normalises it.
+   */
+  gstin_status: z.string().nullable(),
   legal_name: z.string().nullable(),
   trade_name: z.string().nullable(),
-  /** Annual turnover if the return set states one; otherwise summed from months. */
+  constitution: z.string().nullable(),
+  principal_place_of_business: z.string().nullable(),
+  /** Date the GSTIN was granted — drives the business-vintage read. */
+  registration_date: z.string().nullable(),
+  /** Other GSTINs / state registrations the return set mentions. */
+  additional_registrations_count: z.number().nullable(),
+  /**
+   * Annual turnover if the return set states one; otherwise summed from the
+   * periods. READ DIRECTLY by lib/decision/rulesEngine.ts::gstPillar as a
+   * top-level number — do not rename, nest or remove it.
+   */
   turnover: z.number().nullable(),
   filing_month: z.string().nullable(),
   filing_frequency: z.string().nullable(),
   business_type: z.string().nullable(),
-  /** One row per GSTR-3B period — powers the turnover trend and volatility. */
-  monthly_turnover: z.array(z.object({
-    month: z.string().nullable(),
-    taxable_value: z.number().nullable(),
-  })).nullable(),
+  /** One row per return period, OLDEST FIRST — powers trend, seasonality and
+   *  the GSTR-1 vs GSTR-3B reconciliation. */
+  monthly_turnover: z.array(gstPeriodSchema).nullable(),
   prior_year_turnover: z.number().nullable(),
+  /** GSTR-1 composition of outward supplies. */
+  b2b_turnover: z.number().nullable(),
+  b2c_turnover: z.number().nullable(),
+  export_turnover: z.number().nullable(),
+  interstate_turnover: z.number().nullable(),
+  credit_notes_value: z.number().nullable(),
+  top_counterparty_percent: z.number().nullable(),
+  top_five_counterparty_percent: z.number().nullable(),
+  /** GSTR-3B liability and tax payment. */
+  gst_liability: z.number().nullable(),
+  tax_paid_cash: z.number().nullable(),
+  itc_utilised: z.number().nullable(),
+  itc_claimed: z.number().nullable(),
+  reverse_charge_liability: z.number().nullable(),
+  interest_and_late_fees: z.number().nullable(),
+  tax_payable_carried_forward: z.number().nullable(),
   returns_due: z.number().nullable(),
   returns_filed: z.number().nullable(),
   late_filings: z.number().nullable(),
-  tax_paid: z.number().nullable(),
-  itc_claimed: z.number().nullable(),
-  top_counterparty_percent: z.number().nullable(),
-  top_five_counterparty_percent: z.number().nullable(),
+  /** Consistency inputs — reconciled against the periods and other documents. */
+  gstr9_annual_turnover: z.number().nullable(),
+  gstr2b_itc: z.number().nullable(),
+  /** Compliance flags the return set itself may state. */
+  has_notices_or_mismatches: z.boolean().nullable(),
+  gstin_cancelled_or_suspended_note: z.string().nullable(),
+  amendment_count: z.number().nullable(),
 })
 
 const propertySchema = z.object({
@@ -324,7 +383,7 @@ const FIELD_HINTS: Record<DocumentType, string> = {
   SALARY_SLIP: 'employee_name, employer_name, month, gross_salary (number), net_salary (number), deductions (number)',
   BANK_STATEMENT: 'account_holder_name, account_number (mask all but the last 4 digits), bank_name, ifsc, branch, account_type, avg_monthly_balance (number), monthly_credits (array of numbers), monthly_debits (array of numbers), salary_credits_detected (boolean), months (array of {month, credits, debits, closing_balance, min_balance, bounces} — one entry per statement month), total_bounces (number), cash_deposit_percent (number), od_sanctioned_limit (number), od_utilisation_percent (number), account_vintage_months (number), aa_verified (boolean — true only if the statement is an Account Aggregator pull), top_inflows (array of {name, amount, txn_count, share_percent, recurring, first_seen, last_seen} — the largest payers by total credit, read off the narrations, highest first), top_outflows (same shape — the largest suppliers/vendors by total debit), credit_categories (array of {label, amount, share_percent} classifying every credit, e.g. "Business receipts", "Cash deposits", "Loan disbursements", "Inter-account transfers", "Other credits"), debit_categories (same shape, e.g. "Supplier payments", "Salary & wages", "Statutory — GST, TDS, PF", "Loan EMIs", "Rent & utilities", "Promoter drawings", "Cash withdrawals")',
   ITR: 'assessee_name, pan_number, and for the LATEST assessment year: assessment_year (e.g. "2025-26"), itr_form, nature_of_income, is_presumptive (boolean), gross_total_income (number), taxable_income (number), business_turnover (number), net_profit (number), tax_paid (number), tax_demand_outstanding (number). Also years (array, OLDEST FIRST, one entry per assessment year the upload contains — an ITR set normally carries two or three) where each entry has: assessment_year, financial_year (the previous year the return covers, e.g. "2024-25"), itr_form ("ITR-1" | "ITR-2" | "ITR-3" | "ITR-4" | "ITR-5" | "ITR-6" | "ITR-7"), nature_of_income ("SALARIED" | "PROPRIETOR" | "PARTNER" | "DIRECTOR" | "PROFESSIONAL" | "COMMISSION_FREELANCE" | "RENT_INVESTMENT" | "AGRICULTURE" — the head the bulk of the income sits under), is_presumptive (boolean — true when income is declared under section 44AD, 44ADA or 44AE), presumptive_section ("44AD" | "44ADA" | "44AE"), gross_total_income (number), taxable_income (number — total income after Chapter VI-A), total_deductions (number — Chapter VI-A deductions), salary_income (number), business_income (number — income from business or profession), rental_income (number — income from house property), interest_income (number), other_income (number), business_turnover (number — gross receipts / turnover / sales), gross_profit (number), net_profit (number), depreciation (number), interest_expense (number — interest debited to the P&L), partner_remuneration (number — remuneration and interest paid to partners), business_expenses (number — total expenses debited), losses_carried_forward (number), tax_payable (number), tax_paid (number — total taxes paid), advance_tax_paid (number), tds_credit (number — TDS credit claimed), tax_demand_outstanding (number — 0 if no demand), filing_date (date the return was filed), filed_on_time (boolean — true if filed on or before the due date for that year), return_status ("FILED" | "PROCESSED" | "UNDER_PROCESSING" | "DEFECTIVE" | "REVISED"), is_revised_return (boolean), revision_count (number), net_worth (number — proprietor/partner capital or shareholders funds, negative if capital is eroded), business_assets (number — total assets on the balance sheet), unsecured_loans (number — unsecured and related-party loans), capital_introduced (number — capital introduced during the year), trade_creditors (number — sundry creditors), negative_capital (boolean). Leave any field the return does not carry as null — a presumptive 44AD/44ADA return will have no detailed expense, depreciation or balance-sheet lines, and a salaried ITR-1 will have no business figures',
-  GST_RETURNS: 'gstin, legal_name, trade_name, turnover (number — annual, only if stated), filing_month, filing_frequency ("MONTHLY" | "QUARTERLY" | "COMPOSITION"), business_type ("MANUFACTURER" | "TRADER" | "RETAILER" | "WHOLESALER" | "SERVICE_PROVIDER"), monthly_turnover (array of {month, taxable_value} — one entry per GSTR-3B period, oldest first), prior_year_turnover (number), returns_due (number), returns_filed (number), late_filings (number), tax_paid (number), itc_claimed (number), top_counterparty_percent (number — largest buyer as a share of turnover), top_five_counterparty_percent (number)',
+  GST_RETURNS: 'gstin, gstin_status ("ACTIVE" | "CANCELLED" | "SUSPENDED"), legal_name, trade_name, constitution ("PROPRIETORSHIP" | "PARTNERSHIP" | "LLP" | "PRIVATE_LIMITED" | "PUBLIC_LIMITED" | "HUF" | "TRUST" | "SOCIETY"), principal_place_of_business, registration_date (date the GSTIN was granted), additional_registrations_count (number — other GSTINs / state registrations the document mentions, 0 if none stated), turnover (number — ANNUAL turnover, only if stated), filing_month, filing_frequency ("MONTHLY" | "QUARTERLY" | "COMPOSITION"), business_type ("MANUFACTURER" | "TRADER" | "RETAILER" | "WHOLESALER" | "SERVICE_PROVIDER"), monthly_turnover (array, OLDEST FIRST, one entry per return period, each {month, taxable_value (number — the period\'s headline taxable turnover: use the GSTR-3B figure when the set carries both, else the GSTR-1 figure; always fill this whenever any turnover is stated for the period), gstr1_taxable_value (number — outward supplies per GSTR-1), gstr3b_taxable_value (number — outward supplies per GSTR-3B), tax_paid_cash (number — GST discharged in cash for the period, not through ITC), itc_claimed (number), filed_on_time (boolean — true if the return for that period was filed on or before its due date), nil_return (boolean — true if a nil return was filed for that period)}), prior_year_turnover (number), b2b_turnover (number — registered-buyer sales), b2c_turnover (number — unregistered/consumer sales), export_turnover (number — including zero-rated SEZ supplies), interstate_turnover (number), credit_notes_value (number — credit notes and sales reversals), top_counterparty_percent (number — largest buyer as a share of turnover), top_five_counterparty_percent (number), gst_liability (number — total GST liability declared in GSTR-3B), tax_paid_cash (number — total tax actually discharged in cash), itc_utilised (number — ITC set off against the liability), itc_claimed (number — ITC claimed in GSTR-3B table 4), reverse_charge_liability (number), interest_and_late_fees (number), tax_payable_carried_forward (number — liability declared but not discharged), returns_due (number), returns_filed (number), late_filings (number), gstr9_annual_turnover (number — from the GSTR-9 annual return where the set includes one, else null), gstr2b_itc (number — ITC auto-populated in GSTR-2B, for the mismatch check), has_notices_or_mismatches (boolean — true only if the document states a notice, a return mismatch or a DRC/ASMT reference), gstin_cancelled_or_suspended_note (free text if the return set mentions cancellation or suspension, else null), amendment_count (number — invoice amendments made to earlier periods). Leave anything the return set does not carry as null — a composition taxpayer files CMP-08 rather than GSTR-3B and will have no ITC lines, and a set of monthly returns without a GSTR-9 will have no gstr9_annual_turnover',
   PROPERTY_DEED: 'owner_name, property_address, registered_value (number)',
   BUILDER_AGREEMENT: 'owner_name, property_address, registered_value (number)',
   OCCUPANCY_CERTIFICATE: 'owner_name, property_address, registered_value (number)',
