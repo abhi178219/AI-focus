@@ -19,6 +19,16 @@
 
 ---
 
+### 🏦 LendStream DSA Hub — [`/lendstream-dsa-hub`](./lendstream-dsa-hub)
+
+> A real loan origination system for DSA partners — lead capture through underwriting, decisioning and disbursal, with a local AI pipeline that reads uploaded documents (bank statements, ITR, GST returns, bureau reports) instead of asking users to re-key them. Deterministic rules engine drives every PASS/REFER/DECLINE; the LLM only extracts.
+
+- **Stack:** Next.js 16, React 19, Supabase (Postgres + RLS), local Ollama + Tesseract OCR
+- **Run:** `npm install && npm run dev` from the folder — see its own README for env setup and seeding
+- [README](./lendstream-dsa-hub/README.md)
+
+---
+
 ### 📰 NewsFlow — [`/newsflow`](./newsflow)
 
 > A real-time, AI-tagged news aggregator for small teams. Bento layout with 5 category lanes, Claude Haiku AI insight tags, and personalised ranking via thumbs up/down signals.
