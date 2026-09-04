@@ -12,6 +12,7 @@ import { ConsentCenterCard } from '@/components/shared/ConsentCenterCard'
 import { ApplicantDocumentVault } from '@/components/shared/ApplicantDocumentVault'
 import { RelationshipActivityCard } from '@/components/shared/RelationshipActivityCard'
 import { RelationshipSnapshotCard, type RelationshipSnapshot } from '@/components/shared/RelationshipSnapshotCard'
+import { RelationshipManagerCard } from '@/components/shared/RelationshipManagerCard'
 import {
   LOAN_TYPE_LABEL, STAGE_LABELS, STAGE_PILL_STYLES, VERDICT_STYLES,
   type Applicant, type ApplicantConsent, type ApplicantDocument, type ApplicantInteraction,
@@ -57,12 +58,19 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
   const isCompany = applicant.entity_type === 'COMPANY'
   const isOwn = applicant.agent_id === user.id
 
+  // Ops can also set an RM's reporting line (e.g. correcting it on their
+  // behalf) — same own-or-ops boundary updateReportingHierarchy enforces.
+  const { data: viewerProfile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  const canEditRm = isOwn || viewerProfile?.role === 'ops_admin'
+
   const [
     { data: leads }, { data: rm }, { data: keyPersonnelRows }, { data: parentCompanyLink },
     { data: consentRows }, { data: vaultDocuments }, { data: relationshipInteractions },
   ] = await Promise.all([
     supabase.from('leads').select('*').eq('applicant_id', id).returns<Lead[]>(),
-    supabase.from('profiles').select('full_name, email, phone, region').eq('id', applicant.agent_id).single(),
+    supabase.from('profiles')
+      .select('full_name, email, phone, region, team_manager_name, team_manager_phone, business_head_name, business_head_phone')
+      .eq('id', applicant.agent_id).single(),
     // Only a company ever has key personnel underneath it.
     isCompany
       ? supabase.from('key_personnel').select('*').eq('company_applicant_id', id).returns<KeyPersonnel[]>()
@@ -192,17 +200,12 @@ export default async function ApplicantDetailPage({ params }: { params: Promise<
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <ApplicantIdentityCard applicant={applicant} isCompany={isCompany} isOwn={isOwn} panNumber={panNumber} />
 
-        <Card>
-          <CardHead title="Relationship manager" sub="Owns this file" />
-          <CardBody>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-              <Field label="Name" value={rm?.full_name ?? null} />
-              <Field label="Region" value={rm?.region ?? null} />
-              <Field label="Phone" value={rm?.phone ?? null} />
-              <Field label="Email" value={rm?.email ?? null} />
-            </div>
-          </CardBody>
-        </Card>
+        <RelationshipManagerCard
+          profileId={applicant.agent_id}
+          rm={rm}
+          canEdit={canEditRm}
+          applicantPath={`/partner/applicants/${applicant.id}`}
+        />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

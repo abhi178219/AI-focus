@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Phone, StickyNote, FileText, Send } from 'lucide-react'
 import { Avatar } from '@/components/shared/Avatar'
+import { InfoTooltip } from '@/components/ui/Tooltip'
 import {
   STAGE_LABELS, STAGE_DESCRIPTIONS, STAGE_PILL_STYLES, VERDICT_STYLES,
   type Lead, type Assessment,
@@ -83,16 +84,19 @@ export function LeadHeader({
             value={assessment?.governing_capacity ? fmtAmount(assessment.governing_capacity) : '—'}
             sub={bindingConstraint ?? (assessment ? 'No binding constraint' : 'Not assessed yet')}
             emphasis
+            tooltip="The maximum amount the rules engine will support, after the weakest pillar (income, banking, bureau, collateral or GST) has capped it. This is the number that decides whether the requested amount is fundable — not the amount requested."
           />
           <Metric
             label="Indicative EMI"
             value={assessment?.proposed_emi ? `₹${Math.round(assessment.proposed_emi).toLocaleString('en-IN')}` : '—'}
             sub="At proposed terms"
+            tooltip="The monthly instalment the requested amount would carry at the product's proposed rate and tenure — used to compute FOIR and DSCR, not the eventual sanctioned EMI."
           />
           <Metric
             label="DSCR"
             value={assessment?.dscr != null ? assessment.dscr.toFixed(2) : '—'}
             sub={assessment?.dscr != null ? 'Floor 1.25' : 'Needs income + EMI'}
+            tooltip="Debt Service Coverage Ratio — net income divided by total EMI obligation (existing + proposed). Above 1 means income covers the debt; this programme's floor is 1.25, so there's real headroom, not just enough to scrape by."
           />
           <div className="rounded-[20px] border border-[#dcdbd6] bg-[#f7f6f4] px-4 py-3 flex items-center gap-3">
             {assessment ? (
@@ -118,10 +122,15 @@ export function LeadHeader({
   )
 }
 
-function Metric({ label, value, sub, emphasis }: { label: string; value: string; sub?: string; emphasis?: boolean }) {
+function Metric({
+  label, value, sub, emphasis, tooltip,
+}: { label: string; value: string; sub?: string; emphasis?: boolean; tooltip?: string }) {
   return (
     <div className={`rounded-[20px] border px-4 py-3 min-w-0 ${emphasis ? 'border-[#dcdbd6] bg-[#efeeeb]' : 'border-[#dcdbd6] bg-[#f7f6f4]'}`}>
-      <p className="text-[10px] uppercase tracking-wide text-[#7c7a75]">{label}</p>
+      <p className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-[#7c7a75]">
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} label={`What is ${label}?`} />}
+      </p>
       <p className="text-[18px] font-bold text-[#16161a] tnum leading-tight mt-0.5">{value}</p>
       {sub && <p className="text-[10.5px] text-[#7c7a75] mt-0.5 truncate">{sub}</p>}
     </div>

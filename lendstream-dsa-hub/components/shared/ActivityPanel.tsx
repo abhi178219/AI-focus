@@ -9,7 +9,8 @@ import {
 import { addInteraction } from '@/app/actions/leads'
 import { Card, CardHead, CardBody } from '@/components/ui/Card'
 import { KeyValueRow } from '@/components/shared/StatTile'
-import type { Lead } from '@/lib/types'
+import { ConsentStatusCard } from '@/components/shared/ConsentStatusCard'
+import type { ApplicantConsent, Lead } from '@/lib/types'
 
 type Category = 'CUSTOMER' | 'INTERNAL' | 'BANK'
 
@@ -118,13 +119,18 @@ function isCategory(v: string): v is Category {
 }
 
 export function ActivityPanel({
-  leadId, lead, interactions, ownerName, bankNames,
+  leadId, lead, interactions, ownerName, bankNames, consents, isOwn,
 }: {
   leadId: string
   lead: Lead
   interactions: ActivityRow[]
   ownerName: string | null
   bankNames: string[]
+  /** This applicant's full consent history, newest first — feeds the sidebar
+   *  ConsentStatusCard that replaced the old CRM sync card. */
+  consents: ApplicantConsent[]
+  /** Whether the viewer owns this lead; gates the "Send consent link" button. */
+  isOwn: boolean
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -447,14 +453,16 @@ export function ActivityPanel({
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHead title="CRM sync" />
-          <CardBody className="py-1">
-            <KeyValueRow label="Status" value={lead.crm_synced ? 'Synced' : 'Pending'} />
-            <KeyValueRow label="Last synced" value={lead.crm_synced_at ? new Date(lead.crm_synced_at).toLocaleString('en-IN') : 'Never'} />
-            <KeyValueRow label="Created" value={new Date(lead.created_at).toLocaleDateString('en-IN')} mono />
-          </CardBody>
-        </Card>
+        {/* Replaced the old "CRM sync" card, which reported on an integration
+            this app does not have. Consent is the thing an agent actually needs
+            at a glance while working the file — and the place to send the
+            customer a link to record it themselves. */}
+        <ConsentStatusCard
+          leadId={leadId}
+          applicantId={lead.applicant_id}
+          consents={consents}
+          isOwn={isOwn}
+        />
 
         <div className="rounded-[20px] bg-[#eef1fe] px-4 py-3 text-[12px] leading-relaxed text-[#2447c9]">
           Every logged interaction feeds the follow-up engine. Anything not recorded here is invisible to the

@@ -6,6 +6,7 @@ import { Badge } from '@/components/shared/Badge'
 import { Avatar } from '@/components/shared/Avatar'
 import { PillarRadar, type RadarAxis } from '@/components/shared/PillarRadar'
 import { PassRateByRm, type RmPassRate } from '@/components/shared/PassRateByRm'
+import { SanctionRateByLender, type LenderSanctionRate } from '@/components/shared/SanctionRateByLender'
 import { StatLine } from '@/components/shared/StatTile'
 import {
   LOAN_TYPE_LABEL, STAGE_LABELS, VERDICT_STYLES, BAND_STYLES, BAND_LABEL, FUNNEL_STAGES,
@@ -124,6 +125,22 @@ export default async function PartnerDashboard() {
       assessed: total,
     }))
     .sort((a, b) => b.rate - a.rate)
+
+  // Sanction rate by lender — of every file assigned to a given bank, what
+  // share reached SANCTIONED or DISBURSED. `bank_assigned` is set by hand on
+  // a lead (EditApplicantForm), independent of stage, so this is a real read
+  // on which lenders actually come through, not just which were quoted.
+  const byBank = new Map<string, { sanctioned: number; total: number }>()
+  for (const l of rows) {
+    if (!l.bank_assigned) continue
+    const e = byBank.get(l.bank_assigned) ?? { sanctioned: 0, total: 0 }
+    e.total += 1
+    if (l.stage === 'SANCTIONED' || l.stage === 'DISBURSED') e.sanctioned += 1
+    byBank.set(l.bank_assigned, e)
+  }
+  const lenderRows: LenderSanctionRate[] = [...byBank.entries()]
+    .map(([bank, { sanctioned, total }]) => ({ bank, rate: total ? (sanctioned / total) * 100 : 0, total, sanctioned }))
+    .sort((a, b) => b.total - a.total)
 
   // Six condensed milestone stages, as the prototype — Contacted and
   // Documentation are working states rather than funnel milestones.
@@ -322,6 +339,8 @@ export default async function PartnerDashboard() {
           viewAllHref="/partner/leads"
           scopeNote="Your own files — this view is scoped to the leads you own"
         />
+
+        <SanctionRateByLender rows={lenderRows} />
 
         <Card className="lg:col-span-3">
           <CardHead title="Monthly disbursal" sub="Last 12 months, ₹ lakh" />

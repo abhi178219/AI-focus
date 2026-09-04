@@ -6,6 +6,7 @@ import { LeadOverview } from '@/components/shared/LeadOverview'
 import { SectionPanel } from '@/components/shared/SectionPanel'
 import { DocumentUploadForm } from '@/components/shared/DocumentUploadForm'
 import { DocumentsTable } from '@/components/shared/DocumentsTable'
+import { UploadLinkCard } from '@/components/shared/CustomerLinkControls'
 import { ActivityPanel, type ActivityRow } from '@/components/shared/ActivityPanel'
 import { DecisionPanel } from '@/components/shared/DecisionPanel'
 import { OffersPanel } from '@/components/shared/OffersPanel'
@@ -14,6 +15,7 @@ import { buildSections, buildSignals, type SectionCode } from '@/lib/decision/se
 import {
   type Lead, type DocumentRow, type Assessment, type AssessmentPillar,
   type LenderOffer, type LenderProduct, type Product, type Band, type SectionSummary,
+  type ApplicantConsent,
 } from '@/lib/types'
 
 /** Tab order matches the prototype exactly. */
@@ -48,14 +50,28 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
 
   const productCategories = lead.loan_type === 'BOTH' ? ['PL', 'HL'] : [lead.loan_type]
 
-  const [{ data: documents }, { data: assessment }, { data: interactions }, { data: offers }, { data: catalogueProducts }, { data: rankProduct }] = await Promise.all([
+  const [
+    { data: documents }, { data: assessment }, { data: interactions }, { data: offers },
+    { data: catalogueProducts }, { data: rankProduct }, { data: consentRows }, { data: { user } },
+  ] = await Promise.all([
     supabase.from('documents').select('*').eq('lead_id', leadId).order('uploaded_at', { ascending: false }).returns<DocumentRow[]>(),
     supabase.from('assessments').select('*, assessment_pillars(*)').eq('lead_id', leadId).order('computed_at', { ascending: false }).limit(1).maybeSingle<Assessment & { assessment_pillars: AssessmentPillar[] }>(),
     supabase.from('interactions').select('*').eq('lead_id', leadId).order('occurred_at', { ascending: false }),
     supabase.from('lender_offers').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).returns<LenderOffer[]>(),
     supabase.from('products').select('id, required_documents').in('category', productCategories),
     supabase.from('products').select('*').eq('category', productCategories[0]).eq('is_active', true).order('min_interest_rate').limit(1).maybeSingle<Product>(),
+    // Same query shape the applicant page uses for ConsentCenterCard, scoped
+    // via lead.applicant_id instead of that page's own :id param. Consent is
+    // append-only, so this full history is also where "current" comes from.
+    supabase.from('applicant_consents').select('*').eq('applicant_id', lead.applicant_id)
+      .order('captured_at', { ascending: false }).returns<ApplicantConsent[]>(),
+    supabase.auth.getUser(),
   ])
+
+  // Gates the "Send consent link" / "Send upload link" controls, matching the
+  // applicant page's `isOwn` convention. Ops admins see every lead but are not
+  // the owner who sends the customer their link.
+  const isOwn = lead.agent_id === user?.id
 
   const docs = documents ?? []
   const pillars = assessment?.assessment_pillars ?? []
@@ -187,6 +203,7 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
 
       {activeTab === 'documents' && (
         <div className="space-y-4">
+          <UploadLinkCard leadId={leadId} isOwn={isOwn} />
           <DocumentUploadForm leadId={leadId} />
           <DocumentsTable documents={docs} requiredDocTypes={requiredDocTypes} loanType={lead.loan_type} />
         </div>
@@ -199,6 +216,8 @@ export async function LeadDetail({ leadId, basePath, tab }: { leadId: string; ba
           interactions={activityRows}
           ownerName={nameById.get(lead.agent_id) ?? null}
           bankNames={bankNames}
+          consents={consentRows ?? []}
+          isOwn={isOwn}
         />
       )}
     </div>

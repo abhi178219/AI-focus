@@ -142,6 +142,75 @@ export interface ApplicantInteraction {
   next_follow_up: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Customer-facing links — the app's only public, unauthenticated write path.
+// See migration 031_customer_links.sql and app/actions/publicSubmissions.ts.
+// ---------------------------------------------------------------------------
+
+export type CustomerLinkPurpose = 'CONSENT' | 'DOCUMENT_UPLOAD'
+
+export const CUSTOMER_LINK_PURPOSE_LABEL: Record<CustomerLinkPurpose, string> = {
+  CONSENT: 'Consent',
+  DOCUMENT_UPLOAD: 'Document upload',
+}
+
+/** The `channel` stamped on a consent captured through a public link, so it is
+ *  visibly distinct from one an agent recorded by hand in the Consent Centre. */
+export const CONSENT_LINK_CHANNEL = 'Consent link'
+
+/**
+ * One capability handed to one customer for one lead, for a fixed window.
+ *
+ * `token` is a BEARER CAPABILITY, not an identifier: holding it is the entire
+ * authorisation, so it is the only thing a public request may name. Everything
+ * a public action then reads or writes is scoped to the `lead_id`/
+ * `applicant_id` recorded HERE — never to an id the request supplied itself.
+ * There is no RLS policy granting anon any access to this table; the public
+ * pages reach it only through the service-role client inside the
+ * token-revalidating actions in app/actions/publicSubmissions.ts.
+ */
+export interface CustomerLink {
+  id: string
+  token: string
+  purpose: CustomerLinkPurpose
+  lead_id: string
+  applicant_id: string
+  /** The agent who generated and sent the link — the accountable party, and
+   *  the `captured_by` stamped on any consent recorded through it. */
+  created_by: string
+  expires_at: string
+  created_at: string
+}
+
+/**
+ * Everything the PUBLIC consent page is allowed to know. Deliberately narrow:
+ * a display name and the three consent types' current state — nothing else
+ * about the applicant, nothing at all about the lead, and no ids. An invalid or
+ * expired token yields `{ ok: false }` and no explanation of which it was.
+ */
+export type PublicConsentPageData =
+  | { ok: false }
+  | {
+      ok: true
+      displayName: string
+      latestByType: Partial<Record<ConsentType, { granted: boolean; captured_at: string }>>
+    }
+
+/**
+ * Everything the PUBLIC upload page is allowed to know: a display name, what
+ * this product requires, and a bare list of what is already on file — type and
+ * date only, never a file name, never a stored path, never anything from
+ * another lead or applicant.
+ */
+export type PublicUploadPageData =
+  | { ok: false }
+  | {
+      ok: true
+      displayName: string
+      requiredDocTypes: string[]
+      onFile: { type: DocumentType; uploaded_at: string }[]
+    }
+
 /**
  * Company/Contact association — HubSpot style (see
  * /decisions/2026-08-31-lendstream-dsa-hub-company-key-personnel.md). A key

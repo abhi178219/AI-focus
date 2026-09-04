@@ -6,6 +6,7 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { TasksToolbar } from '@/components/shared/TasksToolbar'
 import { TaskItem, type TaskWithRefs } from '@/components/shared/TaskItem'
 import { periodRange, todayISO, PERIOD_LABEL, type TaskPeriod } from '@/lib/dates'
+import { TaskSummaryStrip } from '@/components/shared/TaskSummaryStrip'
 import { fmtAmount } from '@/lib/format'
 import type { Task } from '@/lib/types'
 
@@ -64,6 +65,20 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   const today = todayISO()
   const overdue = withRefs.filter((t) => t.status === 'PENDING' && t.due_date && t.due_date < today)
   const highPriorityPending = withRefs.filter((t) => t.status === 'PENDING' && t.priority === 'HIGH')
+  const totalPending = withRefs.filter((t) => t.status === 'PENDING').length
+
+  // Created-vs-pending volume for all three periods at once, independent of
+  // whichever period tab is currently selected below — "created" counts by
+  // created_at, "pending" by due_date falling in that window and still open.
+  const summaryPeriods = (['day', 'week', 'month'] as TaskPeriod[]).map((p) => {
+    const { from, to } = periodRange(p)
+    const created = withRefs.filter((t) => {
+      const d = t.created_at.slice(0, 10)
+      return d >= from && d <= to
+    }).length
+    const pending = withRefs.filter((t) => t.status === 'PENDING' && t.due_date && t.due_date >= from && t.due_date <= to).length
+    return { period: p, created, pending }
+  })
 
   const { from, to } = periodRange(period)
   const inPeriod = withRefs.filter((t) => t.due_date && t.due_date >= from && t.due_date <= to)
@@ -97,6 +112,8 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
           <Plus size={14} strokeWidth={3} /> New task
         </Link>
       </div>
+
+      <TaskSummaryStrip totalPending={totalPending} periods={summaryPeriods} />
 
       {(overdue.length > 0 || highPriorityPending.length > 0) && (
         <div className="mb-4 flex items-center gap-2 rounded-2xl border border-[#f3d9d9] bg-[#fdf3f2] px-4 py-3 text-[12.5px] font-medium text-[#8a2f2f]">
